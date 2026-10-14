@@ -1,0 +1,28 @@
+{
+  "name": "fluex",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.11.2",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.11.2",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "@flue/cli": "catalog:",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r run check:types",
+    "test": "vitest run",
+    "test:integration": "INTEGRATION=1 vitest run .integration.test.ts",
+    "pack": "pnpm -r --filter \"./packages/*\" exec pnpm pack --pack-destination ../../packs"
+  }
+}

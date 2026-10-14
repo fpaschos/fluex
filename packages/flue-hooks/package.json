@@ -1,0 +1,19 @@
+{
+  "name": "@fluex/flue-hooks",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "check:types": "tsc --noEmit"
+  },
+  "private": true,
+  "peerDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "devDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "dependencies": {
+    "valibot": "catalog:"
+  }
+}

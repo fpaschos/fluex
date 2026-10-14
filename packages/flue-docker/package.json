@@ -1,0 +1,20 @@
+{
+  "name": "@fluex/flue-docker",
+  "version": "0.0.0",
+  "exports": "./src/index.ts",
+  "private": true,
+  "scripts": {
+    "check:types": "tsc --noEmit"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "peerDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "dependencies": {
+    "execa": "10.1.0",
+    "valibot": "catalog:"
+  }
+}

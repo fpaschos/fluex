@@ -1,0 +1,21 @@
+{
+  "type": "module",
+  "name": "@fluex/pi-auth",
+  "private": true,
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@earendil-works/pi-ai": "catalog:",
+    "@types/proper-lockfile": "4.1.4",
+    "proper-lockfile": "4.1.2"
+  },
+  "devDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "peerDependencies": {
+    "@flue/runtime": "catalog:"
+  },
+  "scripts": {
+    "check:types": "tsc --noEmit"
+  },
+  "version": "0.0.0"
+}

@@ -1,0 +1,11 @@
+# AGENTS.md
+
+## Dependencies and manifests
+
+Change `package.json` and `pnpm-lock.yaml` only through the pnpm CLI, so the manifest and the lockfile always move together:
+
+- Add dependencies at their latest version, pinned exactly: `pnpm add -E <pkg>` (`-D` for dev, `--save-peer` for peer). Versions are bare (`1.2.3`), never ranges (`^`, `~`).
+- Shared versions (`@flue/*`, `pi-ai`) live in the `catalog:` of `pnpm-workspace.yaml`: reference one with `pnpm add <pkg>@catalog:`, add a new one with `pnpm add -E --save-catalog <pkg>`.
+- Upgrade with `pnpm update -L -E <pkg>`, remove with `pnpm remove <pkg>`, scaffold a package with `pnpm init`, and set other fields with `pnpm pkg set` / `pnpm pkg delete`.
+- `pnpm pkg set` rejects `:` in a key path; set such keys as JSON: `pnpm pkg set --json 'scripts={"check:types":"tsc --noEmit"}'`.
+- Every dependency version, including `catalog:` entries in `pnpm-workspace.yaml`, changes through a pnpm command. When no command covers a change, stop and ask the user. The lockfile is always generated.
