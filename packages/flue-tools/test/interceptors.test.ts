@@ -135,11 +135,11 @@ describe('withInterceptors on a ToolDefinition', () => {
 		expect(runs).toEqual(['ADA']);
 	});
 
-	it('returns the run result unchanged when no interceptor alters it, and skips interceptors for other tools', async () => {
+	it('returns the run output unchanged when no interceptor alters it, and skips interceptors for other tools', async () => {
 		const seen: string[] = [];
 		const elsewhere: ToolInterceptor = { tools: ['bash'], intercept: async (call, next) => (seen.push(call.tool), next()) };
 		const passing: ToolInterceptor = { intercept: async (call, next) => (seen.push(call.tool), next()) };
-		expect(await run(withInterceptors(greet, elsewhere, passing), 'ada')).toBe('hello ada');
+		expect(await run(withInterceptors(greet, elsewhere, passing), 'ada')).toEqual({ output: 'hello ada' });
 		expect(seen).toEqual(['greet']);
 	});
 });

@@ -106,20 +106,25 @@ function interceptFactory(factory: SandboxFactory, interceptors: ToolInterceptor
 			session = sandbox;
 			return sandbox;
 		},
-		tools: (sandbox, options) => base(sandbox, options).map((tool) => interceptTool(tool, sandbox, session ?? sandbox, interceptors)),
+		tools: (sandbox, options) => base(sandbox, options).map((tool) => interceptTool(tool, sandbox, session, interceptors)),
 	};
 }
 
-function interceptTool(tool: AgentTool, sandbox: Sandbox, session: object, interceptors: ToolInterceptor[]): AgentTool {
-	const applicable = interceptors.filter(({ tools }) => !tools || tools.includes(tool.name));
-	if (applicable.length === 0) return tool;
+function interceptTool(tool: AgentTool, sandbox: Sandbox, session: object | undefined, interceptors: ToolInterceptor[]): AgentTool {
+	const matching = applicable(interceptors, tool.name);
+	if (matching.length === 0) return tool;
 	return {
 		...tool,
 		execute(toolCallId, params, signal, onUpdate) {
 			const call: ToolCall = { tool: tool.name, toolCallId, input: params as Record<string, unknown>, sandbox, session, signal };
-			return chain(applicable, call, (input) => tool.execute(toolCallId, input as never, signal, onUpdate));
+			return chain(matching, call, (input) => tool.execute(toolCallId, input as never, signal, onUpdate));
 		},
 	};
+}
+
+/** The interceptors whose `tools` include `tool`, or that have none. */
+function applicable(interceptors: ToolInterceptor[], tool: string): ToolInterceptor[] {
+	return interceptors.filter(({ tools }) => !tools || tools.includes(tool));
 }
 
 /** Run `call` through `interceptors` in order; the last `next` runs the tool. */
@@ -132,20 +137,14 @@ function chain(interceptors: ToolInterceptor[], call: ToolCall, run: (input: Rec
 type RunReturn = string | { output?: unknown; terminate?: boolean } | void;
 
 function interceptDefinition<T extends ToolDefinition<any, any, any, any>>(tool: T, interceptors: ToolInterceptor[]): T {
-	const applicable = interceptors.filter(({ tools }) => !tools || tools.includes(tool.name));
-	if (applicable.length === 0) return tool;
+	const matching = applicable(interceptors, tool.name);
+	if (matching.length === 0) return tool;
 	return {
 		...tool,
 		async run(context: Parameters<T['run']>[0]) {
-			const ran = new Map<ToolResult, RunReturn>();
 			const call: ToolCall = { tool: tool.name, toolCallId: context.toolCallId, input: (context as { data?: Record<string, unknown> }).data ?? {}, signal: context.signal };
-			const result = await chain(applicable, call, async (input) => {
-				const raw: RunReturn = await tool.run({ ...context, data: input });
-				const asResult = toolResult(raw);
-				ran.set(asResult, raw);
-				return asResult;
-			});
-			return ran.has(result) ? ran.get(result) : runReturn(tool.name, result);
+			// Flue reads a bare string as `{ output }`, so the result goes back as an envelope even when unchanged.
+			return runReturn(tool.name, await chain(matching, call, async (input) => toolResult(await tool.run({ ...context, data: input }))));
 		},
 	};
 }
@@ -159,7 +158,7 @@ function toolResult(raw: RunReturn): ToolResult {
 	};
 }
 
-/** Back from a result an interceptor changed or built: its `output`, with any context appended. */
+/** Back to a `run` return: the result's `output`, with any context appended. */
 function runReturn(toolName: string, result: ToolResult): RunReturn {
 	const details = (result.details ?? {}) as { output?: unknown; terminate?: boolean; fluex?: FluexDetails };
 	const output = 'output' in details ? details.output : result.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
