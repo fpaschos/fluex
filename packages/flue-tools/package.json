@@ -1,5 +1,5 @@
 {
-  "name": "@fluex/flue-hooks",
+  "name": "@fluex/flue-tools",
   "version": "0.0.0",
   "type": "module",
   "exports": "./src/index.ts",

@@ -46,7 +46,7 @@ When sources disagree, use this order:
 
 ### Local `fluex` project
 
-- pnpm workspace (Milestone 0): `packages/pi-auth`, `packages/flue-hooks`; Vitest suites (the Flue contract test is `packages/pi-auth/test/flue-contract.test.ts`); `docs/verified-contracts.md` and `docs/research/` (observability, run-cli, composition, deployment, sandbox-security, flows).
+- pnpm workspace (Milestone 0): `packages/pi-auth`, `packages/flue-tools`; Vitest suites (the Flue contract test is `packages/pi-auth/test/flue-contract.test.ts`); `docs/verified-contracts.md` and `docs/research/` (observability, run-cli, composition, deployment, sandbox-security, flows).
 - No in-repo app: `apps/playground` was removed after Milestone 2. The sidecars under `auto/` exercise the packages; an `examples/` folder comes later (§8).
 - Sidecars consume fluex packages as packed tarballs (`pnpm run pack` → `packs/`, sidecar `fluex:sync`), not `link:`/`file:` directories: `catalog:` versions only resolve after `pnpm pack`, and a linked package loads a second `@flue/runtime`.
 - Tooling present: Node v24.15.0, pnpm 12.11.2. pi CLI 0.81.1 installed globally (via bun); `~/.pi/agent/auth.json` holds an `openai-codex` OAuth credential.
@@ -123,14 +123,14 @@ From the original handoff notes (checked against Flue 2.1.0 / pi-ai 0.81–0.83)
 auto/target-app-flue (sidecar) ───┐
 examples/* (later) ──────────────┼──> runner (M5) ──> git (M5)
                                  │        └─────────> flue-docker
-                                 ├──> flue-hooks
+                                 ├──> flue-tools
                                  └──> pi-auth
 
 later (Milestones 7–8):
 examples/*, apps/api ──> app-core ──> flue-jev ──> jev-client
                                   └──────> policy ──> contracts
 
-pi-auth, flue-hooks, flue-docker, runner, flue-jev ──> pinned @flue/runtime
+pi-auth, flue-tools, flue-docker, runner, flue-jev ──> pinned @flue/runtime
 git, jev-client, policy, contracts ──X──> @flue/runtime
 ```
 
@@ -149,7 +149,7 @@ fluex/
 │   └── api/                        # M8 (optional)
 ├── packages/
 │   ├── pi-auth/                    # M0: Flue provider from ~/.pi/agent/auth.json
-│   ├── flue-hooks/                 # M1–2: agent add-ons — required skills, tool hooks (Claude-compatible), tool log
+│   ├── flue-tools/                 # M1–2: agent add-ons — required skills, tool hooks (Claude-compatible), tool log
 │   ├── flue-docker/                # M3: Docker SandboxFactory/SandboxDriver, image build, cleanup
 │   ├── git/                        # M5: preflight, worktree, branch strategy, merge
 │   ├── runner/                     # M5: runAgent lifecycle, records, teardown, CLI
@@ -190,7 +190,7 @@ Decided in the Milestone 3–4 grilling (2026-10-13).
 - Env: explicit only, never the host environment; values reach `docker` through the CLI child's environment (`-e KEY`), never argv; known values redacted from errors and logs.
 - `buildImage({ dockerfile, context, tag })` runs `docker build -q` and returns the image ID (Docker's layer cache keeps it cheap).
 - `removeSandbox(key)`, `listSandboxes()`, `pruneSandboxes({ olderThan?, state? })` select by exact fluex labels only. No exit or signal handlers: Flue forbids adapter teardown, and a keyed container is meant to outlive the process.
-- Composes with `flue-hooks`: `withToolHooks(docker(…), claudeHooks())` reads `.claude/settings.json` and runs Claude hooks inside the container through `sandbox.exec`.
+- Composes with `flue-tools`: `withToolHooks(docker(…), claudeHooks())` reads `.claude/settings.json` and runs Claude hooks inside the container through `sandbox.exec`.
 
 Not ported from automaton (questioned during the grilling): `tail -f /dev/null` keep-alive, `-e K=V` in argv, the `~/.gitconfig` mount (git identity goes in as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`), Dockerfile-hash image tags, `rm -f` on process exit, the three sandbox lifecycle hook slots (backlog).
 
@@ -286,7 +286,7 @@ Changed against the plan:
 - A new sidecar `auto/target-app-flue` (`flue init --target node`, pnpm) instead of migrating `auto/target-app-project`, which keeps running automaton until retirement.
 - Skills come from target-app's `.agents/skills/` (Flue workspace discovery), not `useSkill(import …)`.
 - The result is reported through a terminating tool whose input is the Valibot schema; facts (cwd, branch, Java) come from the sandbox, not the model.
-- Added `@fluex/flue-hooks` `useRequiredSkills(id, 'ast-grep')`: hooks only see tool names, so the skill name is checked through `observe()`.
+- Added `@fluex/flue-tools` `useRequiredSkills(id, 'ast-grep')`: hooks only see tool names, so the skill name is checked through `observe()`.
 
 ### Milestone 2 — golden issue (host)
 
@@ -309,7 +309,7 @@ Changed against the plan:
 
 Pulled forward:
 
-- **Tool hooks, Claude-compatible** (`withToolHooks`, `claudeHooks` in `@fluex/flue-hooks`): target-app's `.claude/settings.json` hooks run unchanged on every sandbox tool call (`find`/`jar`/`javap` blocked, ast-grep lint after each `.kt` edit), through Flue's documented `SandboxFactory.tools` slot.
+- **Tool hooks, Claude-compatible** (`withToolHooks`, `claudeHooks` in `@fluex/flue-tools`): target-app's `.claude/settings.json` hooks run unchanged on every sandbox tool call (`find`/`jar`/`javap` blocked, ast-grep lint after each `.kt` edit), through Flue's documented `SandboxFactory.tools` slot.
 - **Tool log and run folder** (`logToolCalls`): automaton-style lines (`bash(cmd) ✓ exit 0 · 0.1s`, `edit(path, +1 -0)`, `skill(ast-grep) ✓`, hook blocks/feedback, a cost summary) and `runs/<id>/events.jsonl` — observability.md step 1.
 - **target-app test logging** (target-app `chore/test-logging-failures-only`): failures only on the console by default (`-PtestLog=verbose` for the old log); with `-w --console=plain`, a single-class test run dropped from 15 kB to under 4 kB of agent context.
 

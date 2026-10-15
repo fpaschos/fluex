@@ -22,7 +22,7 @@ tool calls and target-app's Claude hooks run in the container, through `docker e
 | Network | `bridge`, full egress (`sandbox.ts:70`; default in `flue-docker/src/spec.ts:83`) |
 | Confinement | image user `agent` (uid 1000), `--cap-drop ALL`, `no-new-privileges`, 6 GB / 6 CPU / 1024 PIDs (`spec.ts:154-171`); no socket, `/`, `$HOME` or `/dev` mounts (`spec.ts:97-117`); no mount at or under `/workspace` (`spec.ts:147`) |
 | Secrets in argv | none: env goes through an owner-only `--env-file` deleted after the call (`flue-docker/src/docker-cli.ts:18-21,68-81`) |
-| Hooks | settings read through the sandbox from `/workspace/.claude/`, once per sandbox on its first tool call (`flue-hooks/src/claude-hooks.ts:88`); scripts run in the container from `/workspace/.claude/hooks` (`claude-hooks.ts:162`) |
+| Hooks | settings read through the sandbox from `/workspace/.claude/`, once per sandbox on its first tool call (`flue-tools/src/claude-hooks.ts:88`); scripts run in the container from `/workspace/.claude/hooks` (`claude-hooks.ts:162`) |
 
 Checked on 2026-10-14 (names only, no values read): the container reaches
 `nexus-a.internal.example` (200), `nexus-b.internal.example` (200) and `gitlab.internal.example` (302) through the

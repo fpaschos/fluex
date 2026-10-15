@@ -33,9 +33,9 @@ title, branch, prd? }] }` that `run.ts` feeds to the implementer.
 
 | Piece | Package | Does |
 |---|---|---|
-| `useResult(name, schema, { facts? })` | `flue-hooks` | Terminating report tool: model fills `schema`; host adds `facts(harness)` (commits by trailer, branch); written with `useDataWriter(name)` so `read()` returns it in `reply.data[name]`, and to the run record |
-| `fillTemplate(md, vars)` | `flue-hooks` | `{{KEY}}` substitution; throws on a missing or unused key |
-| `useRequiredSkills` | `flue-hooks` | exists |
+| `useResult(name, schema, { facts? })` | `flue-tools` | Terminating report tool: model fills `schema`; host adds `facts(harness)` (commits by trailer, branch); written with `useDataWriter(name)` so `read()` returns it in `reply.data[name]`, and to the run record |
+| `fillTemplate(md, vars)` | `flue-tools` | `{{KEY}}` substitution; throws on a missing or unused key |
+| `useRequiredSkills` | `flue-tools` | exists |
 | `step(Agent, { id, data, message })` | `runner` | `init` → `dispatch` → `read` under one `start()`; returns `{ result, reply, record }`; throws `AgentRunError` on failed/aborted |
 | `verify(repo, checks)` | `runner` | Host-side commands (`execFile`, argv arrays), sequential, fail-fast; outcome on the record |
 
@@ -69,7 +69,7 @@ stay identical to production.
 
 ## Order
 
-1. `useResult` + `fillTemplate` in `flue-hooks`; port `Smoke` to them (no behaviour change).
+1. `useResult` + `fillTemplate` in `flue-tools`; port `Smoke` to them (no behaviour change).
 2. `useCodingRole` in the sidecar (promote to fluex once a second sidecar needs it); mock `glab` + one ticket.
 3. `Planner` + `Implementer` on the role hook; `step` + `verify` in `@fluex/runner`; `scripts/cycle.ts`.
 4. Run on target-app's current branch (throwaway branch, reverted after).

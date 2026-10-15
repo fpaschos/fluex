@@ -66,14 +66,14 @@ context paragraph.
 
 **Tags:** `feat` `fix` `refactor` `docs` `test` `chore` `perf`
 
-**Scopes in this repo:** package scopes (`flue-hooks`, `pi-auth`) or doc scopes (`plan`, `research`). Omit scope for repo-wide changes (e.g. `docs:`, `chore:`).
+**Scopes in this repo:** package scopes (`flue-tools`, `pi-auth`) or doc scopes (`plan`, `research`). Omit scope for repo-wide changes (e.g. `docs:`, `chore:`).
 
 **Rules:**
 
 - Subject ≤72 chars, imperative (`add`, `drop`, `rename` — not `added`/`adds`). Match the case used in recent commits.
 - Body wraps at 72 cols.
 - **Always open with a context paragraph** stating the problem, prior behavior, or motivation — unless the subject is fully self-evident.
-- **Use a bullet list** when the change touches multiple files, symbols, or steps. Prefix each bullet with the path or area (`packages/flue-hooks/src/...:`, `IMPLEMENTATION_PLAN.md:`, `§3.2 lifecycle:`).
+- **Use a bullet list** when the change touches multiple files, symbols, or steps. Prefix each bullet with the path or area (`packages/flue-tools/src/...:`, `IMPLEMENTATION_PLAN.md:`, `§3.2 lifecycle:`).
 - Cite concrete symbols, file paths, and counts (function names, file paths, `42 pass / 1 skip`).
 - Don't restate the diff in prose — context + bullets is denser.
 - No marketing words (`comprehensive`, `robust`, `enhanced`, `improved`). No `this commit`. No trailing summary that just recaps the subject.

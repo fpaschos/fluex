@@ -22,7 +22,7 @@ and Flue expects one live owner per conversation. Cross-process SSE lags up to 3
 
 ## Proposal
 
-1. **Run recorder** (now) — `useRunRecord()` in `@fluex/flue-hooks`, built on `observe()`, writes
+1. **Run recorder** (now) — `useRunRecord()` in `@fluex/flue-tools`, built on `observe()`, writes
    `runs/<conversationId>/`:
    - `events.jsonl` — turns, tool calls (args + truncated result), usage, logs; one line each
    - `prompt.txt` — system prompt + tools from the first `turn_request` (Flue never stores it)
