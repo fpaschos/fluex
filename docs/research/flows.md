@@ -118,7 +118,7 @@ adds `POST /flows/run-issue` (202, `409` while one runs: one checkout), register
   `start({ providers })` "registers unconditionally — an entry here overwrites a same-ID provider"
   (`reference/agent-api.md:301`). Hazard: calls with different options resolve silently,
   last import wins. `logToolCalls` is the opposite, first wins (`installed` flag,
-  `fluex/packages/flue-hooks/src/tool-log.ts:250-257`).
+  `fluex/packages/flue-tools/src/tool-log.ts:250-257`).
 - **Hang.** `pnpm run-issue` printed its result and did not exit. `start()` + `stop()` alone exits.
   Cause: pi-ai's codex provider caches each session's WebSocket on an idle timer,
   `SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000` (`dist/api/openai-codex-responses.js:650`);

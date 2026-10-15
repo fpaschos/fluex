@@ -345,7 +345,7 @@ once, so no flag); agent files import it. General rule, same as D4: **fluex give
 ```ts
 // <app>-flue/src/observability.ts
 import { observe } from '@flue/runtime';
-import { toolLog } from '@fluex/flue-hooks';
+import { toolLog } from '@fluex/flue-tools';
 observe(toolLog({ runsDir: 'runs' }));
 
 // each agent file

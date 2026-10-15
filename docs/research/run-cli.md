@@ -60,6 +60,6 @@ pnpm fluex runs stop <id>
 ## Order
 
 1. `@fluex/runner`: `fluex run` (+ `--detach`), `runs ls|tail|stop` (~150 lines, Node only, no deps).
-2. Recorder hook in `@fluex/flue-hooks` adds `events.jsonl`/`prompt.txt`; `runs show` gains tool calls and cost;
+2. Recorder hook in `@fluex/flue-tools` adds `events.jsonl`/`prompt.txt`; `runs show` gains tool calls and cost;
    `report_smoke` writes into the run folder instead of `runs/smoke-<timestamp>.json`.
 3. Web viewer (M5) reads the same folders ([observability.md](observability.md) step 3).
