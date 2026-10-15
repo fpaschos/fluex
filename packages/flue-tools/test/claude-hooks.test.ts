@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SandboxFactory } from '@flue/runtime';
@@ -68,6 +68,38 @@ describe('claudeHooks', () => {
 		expect(text(await call('bash', { command: 'echo free' }))).toContain('free');
 	});
 
+	it('appends PreToolUse additionalContext to the result the model sees', async () => {
+		claudeProject(
+			{ PreToolUse: [{ matcher: 'Bash', hooks: [command('context.sh')] }] },
+			{ 'context.sh': `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"prefer rg"}}'` },
+		);
+		const { call } = await toolsWith(claudeHooks());
+		const result = await call('bash', { command: 'echo ran' });
+		expect(text(result)).toContain('ran');
+		expect(text(result)).toContain('prefer rg');
+		expect(result.details).toMatchObject({ fluex: { context: [expect.stringContaining('prefer rg')] } });
+	});
+
+	it('runs the tool with a PreToolUse updatedInput, given in Claude\'s shape', async () => {
+		claudeProject(
+			{
+				PreToolUse: [
+					{ matcher: 'Bash', hooks: [command('rewrite-bash.sh')] },
+					{ matcher: 'Write', hooks: [command('rewrite-write.sh')] },
+				],
+			},
+			{
+				'rewrite-bash.sh': `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"echo rewritten"}}}'`,
+				'rewrite-write.sh': `echo "{\\"hookSpecificOutput\\":{\\"updatedInput\\":{\\"file_path\\":\\"$CLAUDE_PROJECT_DIR/moved.txt\\",\\"content\\":\\"safe\\"}}}"`,
+			},
+		);
+		const { call } = await toolsWith(claudeHooks());
+		expect(text(await call('bash', { command: 'echo original' }))).toContain('rewritten');
+		await call('write', { path: 'asked.txt', content: 'unsafe' });
+		expect(readFileSync(join(dir, 'moved.txt'), 'utf8')).toBe('safe');
+		expect(existsSync(join(dir, 'asked.txt'))).toBe(false);
+	});
+
 	it('treats other exit codes as non-blocking warnings', async () => {
 		claudeProject({ PreToolUse: [{ hooks: [command('broken.sh')] }] }, { 'broken.sh': 'echo oops >&2; exit 1' });
 		const warnings: string[] = [];
@@ -103,6 +135,7 @@ describe('claudeHooks', () => {
 		['PreToolUse is not an array', { PreToolUse: { matcher: 'Bash', hooks: [command('guard.sh')] } }],
 		['a group has no hooks', { PostToolUse: [{ matcher: 'Edit' }] }],
 		['a hook has no command', { PreToolUse: [{ hooks: [{ type: 'command' }] }] }],
+		['a matcher is not a valid regex', { PreToolUse: [{ matcher: 'Bash(', hooks: [command('guard.sh')] }] }],
 	])('fails tool calls when a settings file is invalid (%s), naming the file', async (_case, hooks) => {
 		claudeProject(hooks, {});
 		const { call } = await toolsWith(claudeHooks());
@@ -114,6 +147,69 @@ describe('claudeHooks', () => {
 		writeFileSync(join(dir, '.claude', 'settings.json'), '{ "hooks": {}, }');
 		const { call } = await toolsWith(claudeHooks());
 		await expect(call('bash', { command: 'echo hi' })).rejects.toThrow(`[fluex] invalid Claude hooks in ${join(dir, '.claude', 'settings.json')}: `);
+	});
+
+	it.each([
+		['*', 'bash', true],
+		['', 'bash', true],
+		['Edit', 'edit', true],
+		['Edit', 'write', false],
+		['Edit', 'bash', false],
+		['Edit, Write', 'write', true],
+		['Edit, Write', 'bash', false],
+		['Edit|Write', 'edit', true],
+		['Edit|Write', 'bash', false],
+		['dit', 'edit', false],
+		['dit$', 'edit', true],
+		['dit$', 'write', false],
+		['^Ba', 'bash', true],
+		['Wr.*', 'write', true],
+		['Wr.*', 'read', false],
+	])('matcher %j on %s runs the hook: %s', async (matcher, tool, runs) => {
+		claudeProject({ PreToolUse: [{ matcher, hooks: [command('stop.sh')] }] }, { 'stop.sh': 'echo matched >&2; exit 2' });
+		writeFileSync(join(dir, 'a.txt'), 'x');
+		const inputs: Record<string, Record<string, unknown>> = {
+			bash: { command: 'echo ran' },
+			edit: { path: 'a.txt', oldText: 'x', newText: 'y' },
+			write: { path: 'b.txt', content: 'x' },
+			read: { path: 'a.txt' },
+		};
+		const { call } = await toolsWith(claudeHooks({ warn: () => {} }));
+		const outcome = call(tool, inputs[tool]!);
+		if (runs) await expect(outcome).rejects.toThrow('matched');
+		else await expect(outcome).resolves.toBeDefined();
+	});
+
+	it('warns once, when settings load, about matchers on tools fluex does not intercept', async () => {
+		claudeProject(
+			{
+				PreToolUse: [
+					{ matcher: 'Skill', hooks: [command('ok.sh')] },
+					{ matcher: 'Agent', hooks: [command('ok.sh')] },
+				],
+				PostToolUse: [{ matcher: 'mcp__x', hooks: [command('ok.sh')] }],
+			},
+			{ 'ok.sh': 'exit 0' },
+		);
+		const warnings: string[] = [];
+		const { call } = await toolsWith(claudeHooks({ warn: (m) => warnings.push(m) }));
+		await Promise.all([call('bash', { command: 'echo 1' }), call('bash', { command: 'echo 2' })]);
+		await call('read', { path: '.claude/settings.json' });
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain('Skill');
+		expect(warnings[0]).toContain('Agent');
+		expect(warnings[0]).toContain('mcp__x');
+	});
+
+	it('does not warn about matchers on tools it intercepts', async () => {
+		claudeProject(
+			{ PreToolUse: [{ matcher: '*', hooks: [command('ok.sh')] }, { matcher: 'Edit, Write', hooks: [command('ok.sh')] }, { matcher: 'Bash', hooks: [command('ok.sh')] }] },
+			{ 'ok.sh': 'exit 0' },
+		);
+		const warnings: string[] = [];
+		const { call } = await toolsWith(claudeHooks({ warn: (m) => warnings.push(m) }));
+		await call('bash', { command: 'echo 1' });
+		expect(warnings).toEqual([]);
 	});
 
 	it('ignores events and hooks it does not run', async () => {
@@ -138,7 +234,7 @@ describe('claudeHooks', () => {
 		expect(passed).toMatchObject({ status: 'fulfilled' });
 	});
 
-	it('reads the settings once per sandbox, even for parallel first calls', async () => {
+	it('reads the settings once per submission, over every turn and parallel first calls', async () => {
 		claudeProject({ PreToolUse: [{ matcher: 'Bash', hooks: [command('ok.sh')] }] }, { 'ok.sh': 'exit 0' });
 		const reads: string[] = [];
 		const counting: SandboxFactory = {
@@ -153,9 +249,27 @@ describe('claudeHooks', () => {
 				});
 			},
 		};
-		const { call } = await toolsWith(claudeHooks(), counting);
-		await Promise.all([call('bash', { command: 'echo 1' }), call('bash', { command: 'echo 2' }), call('bash', { command: 'echo 3' })]);
-		expect(reads.filter((path) => path.endsWith('settings.json'))).toEqual([join(dir, '.claude', 'settings.json')]);
+		const hooked = withInterceptors(counting, claudeHooks());
+		const settingsReads = () => reads.filter((path) => path.endsWith('settings.json'));
+
+		// Flue passes `tools()` a new object derived from the sandbox at every turn.
+		const turn = async (sandbox: object, commands: string[]) => {
+			const derived = new Proxy(sandbox, {}) as Parameters<NonNullable<SandboxFactory['tools']>>[0];
+			const tools = hooked.tools!(derived, { subagents: {} });
+			const bash = tools.find((t) => t.name === 'bash')!;
+			const calls = commands.map((cmd, i) => bash.execute(`call-${i}`, { command: cmd } as never));
+			await Promise.all(calls);
+		};
+
+		const first = await hooked.createSandbox({ id: 'first' });
+		await turn(first, ['echo 1', 'echo 2', 'echo 3']);
+		await turn(first, ['echo 4']);
+		await turn(first, ['echo 5']);
+		expect(settingsReads()).toEqual([join(dir, '.claude', 'settings.json')]);
+
+		const second = await hooked.createSandbox({ id: 'second' });
+		await turn(second, ['echo 6']);
+		expect(settingsReads()).toHaveLength(2);
 	});
 
 	it('reads the settings from projectDir and exports it as CLAUDE_PROJECT_DIR', async () => {
