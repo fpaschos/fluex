@@ -11,6 +11,7 @@
     "@flue/runtime": "catalog:"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "catalog:",
     "@flue/runtime": "catalog:"
   },
   "dependencies": {

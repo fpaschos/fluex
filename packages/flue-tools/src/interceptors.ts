@@ -1,15 +1,5 @@
-import {
-	createBashTool,
-	createEditTool,
-	createGlobTool,
-	createGrepTool,
-	createReadTool,
-	createWriteTool,
-	type Sandbox,
-	type SandboxFactory,
-	type SandboxToolFactory,
-	type ToolDefinition,
-} from '@flue/runtime';
+import type { Sandbox, SandboxFactory, SandboxToolFactory, ToolDefinition } from '@flue/runtime';
+import { sandboxToolsOf } from './sandbox-tools.ts';
 
 /** pi-agent-core's `AgentTool`, which `@flue/runtime` does not re-export. */
 type AgentTool = ReturnType<SandboxToolFactory>[number];
@@ -69,16 +59,6 @@ export function withContext(result: ToolResult, text: string): ToolResult {
 	return { ...result, content, details: { ...details, fluex } };
 }
 
-/** Flue's default sandbox tool set — what the runtime installs when a factory has no `tools`. */
-const defaultTools: SandboxToolFactory = (sandbox) => [
-	createReadTool(sandbox),
-	createWriteTool(sandbox),
-	createEditTool(sandbox),
-	createBashTool(sandbox),
-	createGrepTool(sandbox),
-	createGlobTool(sandbox),
-];
-
 /**
  * Run every call of a tool through `interceptors`, in argument order; returns the same kind of value.
  *
@@ -97,7 +77,7 @@ export function withInterceptors(target: SandboxFactory | ToolDefinition<any, an
 }
 
 function interceptFactory(factory: SandboxFactory, interceptors: ToolInterceptor[]): SandboxFactory {
-	const baseTools = factory.tools ?? defaultTools;
+	const baseTools = sandboxToolsOf(factory);
 	// Flue passes `tools()` an object derived from the sandbox (cwd, skill overlays), a new one per
 	// turn: the factory value is the only link back to the object `createSandbox()` returned.
 	let session: object | undefined;
