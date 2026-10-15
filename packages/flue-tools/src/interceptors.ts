@@ -133,7 +133,7 @@ function interceptTool(tool: AgentTool, sandbox: Sandbox, session: object | unde
 			};
 			// What the last interceptor's `next(input)` does: run the real tool.
 			const runTool: RunTool = (input) => tool.execute(toolCallId, input as never, signal, onUpdate);
-			return chain(matching, call, runTool);
+			return chain(matching, 0, call, runTool);
 		},
 	};
 }
@@ -148,17 +148,17 @@ function applicable(interceptors: ToolInterceptor[], tool: string): ToolIntercep
 
 type RunTool = (input: Record<string, unknown>) => Promise<ToolResult>;
 
-/** Run `call` through `interceptors` in order; when none are left, `runTool` runs the real tool. */
-function chain(interceptors: ToolInterceptor[], call: ToolCall, runTool: RunTool): Promise<ToolResult> {
-	const [first, ...rest] = interceptors;
-	if (!first) return runTool(call.input);
+/** Run `call` through `interceptors` from `index` on, in order; past the last one, `runTool` runs the real tool. */
+function chain(interceptors: ToolInterceptor[], index: number, call: ToolCall, runTool: RunTool): Promise<ToolResult> {
+	const current = interceptors[index];
+	if (!current) return runTool(call.input);
 
-	// `next` continues with the remaining interceptors, using the given input or the current one.
+	// `next` continues with the following interceptor, using the given input or the current one.
 	const next: Next = (input = call.input) => {
 		const nextCall = { ...call, input };
-		return chain(rest, nextCall, runTool);
+		return chain(interceptors, index + 1, nextCall, runTool);
 	};
-	return first.intercept(call, next);
+	return current.intercept(call, next);
 }
 
 type RunReturn = string | { output?: unknown; terminate?: boolean } | void;
@@ -184,7 +184,7 @@ function interceptDefinition<T extends ToolDefinition<any, any, any, any>>(tool:
 				return toolResult(raw);
 			};
 
-			const result = await chain(matching, call, runTool);
+			const result = await chain(matching, 0, call, runTool);
 			// Flue reads a bare string as `{ output }`, so returning an envelope is the same even when unchanged.
 			return runReturn(tool.name, result);
 		},
