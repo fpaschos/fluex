@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SandboxFactory } from '@flue/runtime';
@@ -6,16 +6,16 @@ import { local } from '@flue/runtime/node';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { claudeHooks } from '../src/claude-hooks.ts';
 import { type HookRun, onHookRun } from '../src/hook-reports.ts';
-import { type ToolHooks, withToolHooks } from '../src/tool-hooks.ts';
+import { type ToolInterceptor, withInterceptors } from '../src/interceptors.ts';
 
 let dir: string;
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), 'fluex-hooks-'));
 });
 
-/** The hooked tool set over a real local sandbox rooted at `dir`. */
-async function toolsWith(hooks: ToolHooks, factory: SandboxFactory = local({ cwd: dir })) {
-	const hooked = withToolHooks(factory, hooks);
+/** The intercepted tool set over a real local sandbox rooted at `dir`. */
+async function toolsWith(interceptor: ToolInterceptor, factory: SandboxFactory = local({ cwd: dir })) {
+	const hooked = withInterceptors(factory, interceptor);
 	const sandbox = await hooked.createSandbox({ id: 'test' });
 	const tools = hooked.tools!(sandbox, { subagents: {} });
 	const call = (name: string, params: Record<string, unknown>) => tools.find((t) => t.name === name)!.execute(`call-${name}`, params as never);
@@ -35,28 +35,6 @@ function claudeProject(hooks: object, scripts: Record<string, string>) {
 }
 const command = (script: string) => ({ type: 'command', command: `\${CLAUDE_PROJECT_DIR}/.claude/hooks/${script}` });
 
-describe('withToolHooks', () => {
-	it('keeps the default six tools', async () => {
-		const { tools } = await toolsWith({});
-		expect(tools.map((t) => t.name)).toEqual(['read', 'write', 'edit', 'bash', 'grep', 'glob']);
-	});
-
-	it('blocks a call before it runs and passes the reason to the model', async () => {
-		const { call } = await toolsWith({ pre: [async ({ input }) => (String(input.command).includes('rm ') ? { block: 'no rm' } : undefined)] });
-		writeFileSync(join(dir, 'keep.txt'), 'x');
-		await expect(call('bash', { command: 'rm keep.txt' })).rejects.toThrow('Blocked by PreToolUse hook:\nno rm');
-		expect(readFileSync(join(dir, 'keep.txt'), 'utf8')).toBe('x');
-		expect(text(await call('bash', { command: 'echo ok' }))).toContain('ok');
-	});
-
-	it('appends post feedback to a successful result', async () => {
-		const { call } = await toolsWith({ post: [async ({ tool, input }) => ({ feedback: `${tool} touched ${input.path}` })] });
-		const result = await call('write', { path: 'a.txt', content: 'hi' });
-		expect(text(result)).toContain('Successfully wrote');
-		expect(text(result)).toContain('PostToolUse hook feedback:\nwrite touched a.txt');
-	});
-});
-
 describe('claudeHooks', () => {
 	it('blocks with stderr when a PreToolUse script exits 2, using Claude stdin', async () => {
 		claudeProject(
@@ -64,7 +42,7 @@ describe('claudeHooks', () => {
 			{ 'guard.sh': `cmd="$(jq -r .tool_input.command)"; [[ "$cmd" == find* ]] && { echo "use fd" >&2; exit 2; }; exit 0` },
 		);
 		const { call } = await toolsWith(claudeHooks());
-		await expect(call('bash', { command: 'find .' })).rejects.toThrow('use fd');
+		await expect(call('bash', { command: 'find .' })).rejects.toMatchObject({ code: 'FLUEX_TOOL_BLOCKED', message: 'Blocked by PreToolUse hook:\nuse fd' });
 		expect(text(await call('bash', { command: 'echo fine' }))).toContain('fine');
 	});
 
