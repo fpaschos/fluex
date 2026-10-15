@@ -190,7 +190,7 @@ Decided in the Milestone 3–4 grilling (2026-10-13).
 - Env: explicit only, never the host environment; values reach `docker` through the CLI child's environment (`-e KEY`), never argv; known values redacted from errors and logs.
 - `buildImage({ dockerfile, context, tag })` runs `docker build -q` and returns the image ID (Docker's layer cache keeps it cheap).
 - `removeSandbox(key)`, `listSandboxes()`, `pruneSandboxes({ olderThan?, state? })` select by exact fluex labels only. No exit or signal handlers: Flue forbids adapter teardown, and a keyed container is meant to outlive the process.
-- Composes with `flue-tools`: `withToolHooks(docker(…), claudeHooks())` reads `.claude/settings.json` and runs Claude hooks inside the container through `sandbox.exec`.
+- Composes with `flue-tools`: `withInterceptors(docker(…), claudeHooks())` reads `.claude/settings.json` and runs Claude hooks inside the container through `sandbox.exec`.
 
 Not ported from automaton (questioned during the grilling): `tail -f /dev/null` keep-alive, `-e K=V` in argv, the `~/.gitconfig` mount (git identity goes in as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`), Dockerfile-hash image tags, `rm -f` on process exit, the three sandbox lifecycle hook slots (backlog).
 
@@ -309,7 +309,7 @@ Changed against the plan:
 
 Pulled forward:
 
-- **Tool hooks, Claude-compatible** (`withToolHooks`, `claudeHooks` in `@fluex/flue-tools`): target-app's `.claude/settings.json` hooks run unchanged on every sandbox tool call (`find`/`jar`/`javap` blocked, ast-grep lint after each `.kt` edit), through Flue's documented `SandboxFactory.tools` slot.
+- **Tool hooks, Claude-compatible** (`withInterceptors`, `claudeHooks` in `@fluex/flue-tools`): target-app's `.claude/settings.json` hooks run unchanged on every sandbox tool call (`find`/`jar`/`javap` blocked, ast-grep lint after each `.kt` edit), through Flue's documented `SandboxFactory.tools` slot.
 - **Tool log and run folder** (`logToolCalls`): automaton-style lines (`bash(cmd) ✓ exit 0 · 0.1s`, `edit(path, +1 -0)`, `skill(ast-grep) ✓`, hook blocks/feedback, a cost summary) and `runs/<id>/events.jsonl` — observability.md step 1.
 - **target-app test logging** (target-app `chore/test-logging-failures-only`): failures only on the console by default (`-PtestLog=verbose` for the old log); with `-w --console=plain`, a single-class test run dropped from 15 kB to under 4 kB of agent context.
 

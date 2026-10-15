@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { Sandbox } from '@flue/runtime';
 import * as v from 'valibot';
-import { reportHookRun } from './hook-reports.ts';
-import type { PostToolHook, PreToolHook, ToolCall, ToolHooks } from './tool-hooks.ts';
+import { reportHook, reportHookRun } from './hook-reports.ts';
+import { blocked, type ToolCall, type ToolInterceptor, withContext } from './interceptors.ts';
 
 /** Flue sandbox tool → Claude Code tool name, as hook matchers see it. */
 const CLAUDE_TOOL: Record<string, string> = { read: 'Read', write: 'Write', edit: 'Edit', bash: 'Bash', grep: 'Grep', glob: 'Glob' };
@@ -34,6 +34,7 @@ type CommandHook = v.InferOutput<typeof HookSchema> & { type: 'command'; command
 type MatcherGroup = v.InferOutput<typeof MatcherGroupSchema>;
 type HookEvent = 'PreToolUse' | 'PostToolUse';
 type Groups = Record<HookEvent, MatcherGroup[]>;
+type SandboxCall = ToolCall & { sandbox: Sandbox };
 
 export interface ClaudeHooksOptions {
 	/** Settings files under `<projectDir>/.claude/`, merged in order. */
@@ -46,8 +47,8 @@ export interface ClaudeHooksOptions {
 
 /**
  * Load Claude Code `PreToolUse` / `PostToolUse` command hooks from a project's
- * `.claude/settings.json` (+ `settings.local.json`) as {@link ToolHooks}, for
- * {@link withToolHooks}. Scripts run unchanged, inside the sandbox, with Claude's stdin
+ * `.claude/settings.json` (+ `settings.local.json`) as a {@link ToolInterceptor}, for
+ * {@link withInterceptors}. Scripts run unchanged, inside the sandbox, with Claude's stdin
  * JSON and exit-code contract: 0 passes (stdout JSON `decision`/`permissionDecision`
  * honoured), 2 blocks (pre) or feeds stderr back to the model (post), anything else is a
  * non-blocking warning. Other events and non-`command` hooks are ignored.
@@ -56,12 +57,12 @@ export interface ClaudeHooksOptions {
  * scripts come from the same checkout, whether it is mounted from the host or cloned inside.
  * An invalid settings file fails every tool call of that sandbox, naming the file.
  */
-export function claudeHooks(options: ClaudeHooksOptions = {}): ToolHooks {
+export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 	const { files = ['settings.json', 'settings.local.json'], warn = (m) => console.warn(m) } = options;
 	// Keyed by sandbox: each agent instance has its own, so concurrent agents read their own checkout.
 	// The promise is cached, so parallel first calls share one read.
 	const loaded = new WeakMap<Sandbox, Promise<Groups>>();
-	const run = async (event: HookEvent, call: ToolCall, extra: object) => {
+	const run = async (event: HookEvent, call: SandboxCall, extra: object) => {
 		const projectDir = options.projectDir === undefined ? call.sandbox.cwd : call.sandbox.resolvePath(options.projectDir);
 		let groups = loaded.get(call.sandbox);
 		if (!groups) {
@@ -71,17 +72,28 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolHooks {
 		return Promise.all(matching((await groups)[event], call.tool).map((hook) => runHook(hook, event, call, extra, projectDir, warn)));
 	};
 
-	const pre: PreToolHook = async (call) => {
-		const blocks = (await run('PreToolUse', call, {})).flatMap((r) => (r?.block ? [r.block] : []));
-		return blocks.length > 0 ? { block: blocks.join('\n') } : undefined;
+	return {
+		tools: Object.keys(CLAUDE_TOOL),
+		async intercept(call, next) {
+			// Only sandbox tools have a sandbox to read settings from and run scripts in.
+			if (!call.sandbox) return next();
+			const sandboxCall = { ...call, sandbox: call.sandbox };
+			const blocks = (await run('PreToolUse', sandboxCall, {})).flatMap((r) => (r?.block ? [r.block] : []));
+			if (blocks.length > 0) {
+				const text = blocks.join('\n');
+				reportHook({ toolCallId: call.toolCallId, tool: call.tool, event: 'PreToolUse', outcome: 'blocked', text });
+				blocked(`Blocked by PreToolUse hook:\n${text}`);
+			}
+
+			const result = await next();
+			const toolResponse = { content: result.content, details: result.details };
+			const feedback = (await run('PostToolUse', sandboxCall, { tool_response: toolResponse })).flatMap((r) => (r?.feedback ? [r.feedback] : []));
+			if (feedback.length === 0) return result;
+			const text = feedback.join('\n');
+			reportHook({ toolCallId: call.toolCallId, tool: call.tool, event: 'PostToolUse', outcome: 'feedback', text });
+			return withContext(result, `PostToolUse hook feedback:\n${text}`);
+		},
 	};
-	const post: PostToolHook = async (call) => {
-		const toolResponse = { content: call.result.content, details: call.result.details };
-		const feedback = (await run('PostToolUse', call, { tool_response: toolResponse })).flatMap((r) => (r?.feedback ? [r.feedback] : []));
-		return feedback.length > 0 ? { feedback: feedback.join('\n') } : undefined;
-	};
-	// Whether a sandbox has hooks is known only once its settings are read: both are always installed.
-	return { pre: [pre], post: [post] };
 }
 
 /** The matcher groups of every settings file present under `<projectDir>/.claude/`, merged in order. */
@@ -139,7 +151,7 @@ function claudeInput(tool: string, input: Record<string, unknown>, sandbox: Sand
 async function runHook(
 	hook: CommandHook,
 	event: HookEvent,
-	call: ToolCall,
+	call: SandboxCall,
 	extra: object,
 	projectDir: string,
 	warn: (message: string) => void,

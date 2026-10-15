@@ -1,4 +1,4 @@
-/** What a tool hook did to one call — reported by {@link withToolHooks}, shown by `logToolCalls`. */
+/** What a tool hook did to one call — reported by {@link claudeHooks}, shown by `logToolCalls`. */
 export interface HookReport {
 	toolCallId: string;
 	tool: string;

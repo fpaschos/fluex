@@ -14,7 +14,7 @@ of what `auto/target-app-flue` has today?
 | Piece | Today (`auto/target-app-flue`) |
 |---|---|
 | Agents | `smoke`, `implementer`, each `'use agent'`; run by `flue run` (`pnpm implement --data '{"issue":65}'`) |
-| Sandbox | `withToolHooks(local({ cwd: TARGET_REPO, env: gradleEnv }), claudeHooks())` |
+| Sandbox | `withInterceptors(local({ cwd: TARGET_REPO, env: gradleEnv }), claudeHooks())` |
 | Model auth | `usePiSubscription('openai-codex')` at agent-module top level |
 | Records | `runs/<id>/events.jsonl` (`logToolCalls`), `runs/<id>/result.json` (implementer `useAgentFinish`) |
 | Database | `src/db.ts` → `sqlite('./data/flue.db')` |
@@ -52,7 +52,7 @@ No `app.ts`, no server, no CI job, no composition script, no viewer.
 
 ### 1. Two switches (with Milestone 4)
 
-- `src/sandbox.ts`: `withToolHooks(SANDBOX === 'local' ? local(…) : docker(…), hooks)`.
+- `src/sandbox.ts`: `withInterceptors(SANDBOX === 'local' ? local(…) : docker(…), hooks)`.
 - `src/model.ts`: `CI === 'true'` → API model; otherwise `usePiSubscription` + subscription model.
 
 `smoke.ts` and `implementer.ts` import both. Commands do not change.
