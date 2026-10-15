@@ -78,19 +78,42 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 			// Only sandbox tools have a sandbox to read settings from and run scripts in.
 			if (!call.sandbox) return next();
 			const sandboxCall = { ...call, sandbox: call.sandbox };
-			const blocks = (await run('PreToolUse', sandboxCall, {})).flatMap((r) => (r?.block ? [r.block] : []));
+
+			const preOutcomes = await run('PreToolUse', sandboxCall, {});
+			const blocks: string[] = [];
+			for (const outcome of preOutcomes) {
+				if (outcome?.block) blocks.push(outcome.block);
+			}
 			if (blocks.length > 0) {
 				const text = blocks.join('\n');
-				reportHook({ toolCallId: call.toolCallId, tool: call.tool, event: 'PreToolUse', outcome: 'blocked', text });
+				reportHook({
+					toolCallId: call.toolCallId,
+					tool: call.tool,
+					event: 'PreToolUse',
+					outcome: 'blocked',
+					text,
+				});
 				blocked(`Blocked by PreToolUse hook:\n${text}`);
 			}
 
 			const result = await next();
+
 			const toolResponse = { content: result.content, details: result.details };
-			const feedback = (await run('PostToolUse', sandboxCall, { tool_response: toolResponse })).flatMap((r) => (r?.feedback ? [r.feedback] : []));
+			const postOutcomes = await run('PostToolUse', sandboxCall, { tool_response: toolResponse });
+			const feedback: string[] = [];
+			for (const outcome of postOutcomes) {
+				if (outcome?.feedback) feedback.push(outcome.feedback);
+			}
 			if (feedback.length === 0) return result;
+
 			const text = feedback.join('\n');
-			reportHook({ toolCallId: call.toolCallId, tool: call.tool, event: 'PostToolUse', outcome: 'feedback', text });
+			reportHook({
+				toolCallId: call.toolCallId,
+				tool: call.tool,
+				event: 'PostToolUse',
+				outcome: 'feedback',
+				text,
+			});
 			return withContext(result, `PostToolUse hook feedback:\n${text}`);
 		},
 	};

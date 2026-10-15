@@ -10,6 +10,10 @@ Change `package.json` and `pnpm-lock.yaml` only through the pnpm CLI, so the man
 - `pnpm pkg set` rejects `:` in a key path; set such keys as JSON: `pnpm pkg set --json 'scripts={"check:types":"tsc --noEmit"}'`.
 - Every dependency version, including `catalog:` entries in `pnpm-workspace.yaml`, changes through a pnpm command. When no command covers a change, stop and ask the user. The lockfile is always generated.
 
+## Code style
+
+Write code that reads top to bottom, one step per line: name each intermediate value in a `const`, define a callback on its own lines before passing it, and `return` a name or a single plain call. Spell out object literals with more than three fields one field per line.
+
 ## Agent skills
 
 ### Issue tracker
