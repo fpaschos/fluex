@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { posix } from 'node:path';
 import type { Sandbox } from '@flue/runtime';
 import * as v from 'valibot';
 import { reportHookRun } from './hook-reports.ts';
@@ -34,40 +33,43 @@ const SettingsSchema = v.looseObject({
 type CommandHook = v.InferOutput<typeof HookSchema> & { type: 'command'; command: string };
 type MatcherGroup = v.InferOutput<typeof MatcherGroupSchema>;
 type HookEvent = 'PreToolUse' | 'PostToolUse';
+type Groups = Record<HookEvent, MatcherGroup[]>;
 
 export interface ClaudeHooksOptions {
 	/** Settings files under `<projectDir>/.claude/`, merged in order. */
 	files?: string[];
-	/** `CLAUDE_PROJECT_DIR` inside the sandbox. Defaults to the sandbox `cwd`. */
+	/** The project inside the sandbox: where the settings are read, and `CLAUDE_PROJECT_DIR`. Defaults to the sandbox `cwd`. */
 	projectDir?: string;
 	/** Where non-blocking hook failures go. Defaults to `console.warn`. */
 	warn?: (message: string) => void;
 }
 
 /**
- * Load Claude Code `PreToolUse` / `PostToolUse` command hooks from a repo's
+ * Load Claude Code `PreToolUse` / `PostToolUse` command hooks from a project's
  * `.claude/settings.json` (+ `settings.local.json`) as {@link ToolHooks}, for
  * {@link withToolHooks}. Scripts run unchanged, inside the sandbox, with Claude's stdin
  * JSON and exit-code contract: 0 passes (stdout JSON `decision`/`permissionDecision`
  * honoured), 2 blocks (pre) or feeds stderr back to the model (post), anything else is a
  * non-blocking warning. Other events and non-`command` hooks are ignored.
  *
- * `hostProjectDir` is where the settings are read on the host; read once, at call time.
+ * The settings are read through the sandbox, once per sandbox, on its first tool call: settings and
+ * scripts come from the same checkout, whether it is mounted from the host or cloned inside.
+ * An invalid settings file fails every tool call of that sandbox, naming the file.
  */
-export function claudeHooks(hostProjectDir: string, options: ClaudeHooksOptions = {}): ToolHooks {
+export function claudeHooks(options: ClaudeHooksOptions = {}): ToolHooks {
 	const { files = ['settings.json', 'settings.local.json'], warn = (m) => console.warn(m) } = options;
-	const groups: Record<HookEvent, MatcherGroup[]> = { PreToolUse: [], PostToolUse: [] };
-	for (const file of files) {
-		const path = join(hostProjectDir, '.claude', file);
-		if (!existsSync(path)) continue;
-		const hooks = settings(path).hooks ?? {};
-		groups.PreToolUse.push(...(hooks.PreToolUse ?? []));
-		groups.PostToolUse.push(...(hooks.PostToolUse ?? []));
-	}
-	const run = (event: HookEvent, call: ToolCall, extra: object) =>
-		Promise.all(
-			matching(groups[event], call.tool).map((hook) => runHook(hook, event, call, extra, options.projectDir, warn)),
-		);
+	// Keyed by sandbox: each agent instance has its own, so concurrent agents read their own checkout.
+	// The promise is cached, so parallel first calls share one read.
+	const loaded = new WeakMap<Sandbox, Promise<Groups>>();
+	const run = async (event: HookEvent, call: ToolCall, extra: object) => {
+		const projectDir = options.projectDir === undefined ? call.sandbox.cwd : call.sandbox.resolvePath(options.projectDir);
+		let groups = loaded.get(call.sandbox);
+		if (!groups) {
+			groups = load(call.sandbox, projectDir, files);
+			loaded.set(call.sandbox, groups);
+		}
+		return Promise.all(matching((await groups)[event], call.tool).map((hook) => runHook(hook, event, call, extra, projectDir, warn)));
+	};
 
 	const pre: PreToolHook = async (call) => {
 		const blocks = (await run('PreToolUse', call, {})).flatMap((r) => (r?.block ? [r.block] : []));
@@ -78,18 +80,29 @@ export function claudeHooks(hostProjectDir: string, options: ClaudeHooksOptions 
 		const feedback = (await run('PostToolUse', call, { tool_response: toolResponse })).flatMap((r) => (r?.feedback ? [r.feedback] : []));
 		return feedback.length > 0 ? { feedback: feedback.join('\n') } : undefined;
 	};
-	return {
-		pre: groups.PreToolUse.length > 0 ? [pre] : [],
-		post: groups.PostToolUse.length > 0 ? [post] : [],
-	};
+	// Whether a sandbox has hooks is known only once its settings are read: both are always installed.
+	return { pre: [pre], post: [post] };
 }
 
-/** The settings in `path`, or an error naming the file and what is wrong with it. */
-function settings(path: string): v.InferOutput<typeof SettingsSchema> {
+/** The matcher groups of every settings file present under `<projectDir>/.claude/`, merged in order. */
+async function load(sandbox: Sandbox, projectDir: string, files: string[]): Promise<Groups> {
+	const groups: Groups = { PreToolUse: [], PostToolUse: [] };
+	for (const file of files) {
+		const path = posix.join(projectDir, '.claude', file);
+		if (!(await sandbox.exists(path))) continue;
+		const hooks = settings(path, await sandbox.readFile(path)).hooks ?? {};
+		groups.PreToolUse.push(...(hooks.PreToolUse ?? []));
+		groups.PostToolUse.push(...(hooks.PostToolUse ?? []));
+	}
+	return groups;
+}
+
+/** The settings in `text` (read from `path`), or an error naming the file and what is wrong with it. */
+function settings(path: string, text: string): v.InferOutput<typeof SettingsSchema> {
 	const invalid = (problem: string) => new Error(`[fluex] invalid Claude hooks in ${path}: ${problem}`);
 	let json: unknown;
 	try {
-		json = JSON.parse(readFileSync(path, 'utf8'));
+		json = JSON.parse(text);
 	} catch (error) {
 		throw invalid((error as Error).message);
 	}
@@ -128,7 +141,7 @@ async function runHook(
 	event: HookEvent,
 	call: ToolCall,
 	extra: object,
-	projectDir: string | undefined,
+	projectDir: string,
 	warn: (message: string) => void,
 ): Promise<{ block?: string; feedback?: string } | undefined> {
 	const { sandbox } = call;
@@ -147,7 +160,7 @@ async function runHook(
 	try {
 		const started = performance.now();
 		const { stdout, stderr, exitCode } = await sandbox.exec(`(${hook.command}) < ${stdinFile}`, {
-			env: { CLAUDE_PROJECT_DIR: projectDir ?? sandbox.cwd },
+			env: { CLAUDE_PROJECT_DIR: projectDir },
 			timeoutMs: (hook.timeout ?? 60) * 1000,
 			signal: call.signal,
 		});

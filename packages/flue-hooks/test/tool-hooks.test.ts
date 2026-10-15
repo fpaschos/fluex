@@ -63,7 +63,7 @@ describe('claudeHooks', () => {
 			{ PreToolUse: [{ matcher: 'Bash', hooks: [command('guard.sh')] }] },
 			{ 'guard.sh': `cmd="$(jq -r .tool_input.command)"; [[ "$cmd" == find* ]] && { echo "use fd" >&2; exit 2; }; exit 0` },
 		);
-		const { call } = await toolsWith(claudeHooks(dir));
+		const { call } = await toolsWith(claudeHooks());
 		await expect(call('bash', { command: 'find .' })).rejects.toThrow('use fd');
 		expect(text(await call('bash', { command: 'echo fine' }))).toContain('fine');
 	});
@@ -73,7 +73,7 @@ describe('claudeHooks', () => {
 			{ PostToolUse: [{ matcher: 'Write|Edit|MultiEdit', hooks: [command('lint.sh')] }] },
 			{ 'lint.sh': `f="$(jq -r .tool_input.file_path)"; grep -q TODO "$f" && { echo "TODO left in $f" >&2; exit 2; }; exit 0` },
 		);
-		const { call } = await toolsWith(claudeHooks(dir));
+		const { call } = await toolsWith(claudeHooks());
 		writeFileSync(join(dir, 'A.kt'), 'fun a() = 1\n');
 		const result = await call('edit', { path: 'A.kt', oldText: '= 1', newText: '= 1 // TODO' });
 		expect(text(result)).toContain(`TODO left in ${join(dir, 'A.kt')}`);
@@ -85,7 +85,7 @@ describe('claudeHooks', () => {
 			{ PreToolUse: [{ matcher: 'Write', hooks: [command('deny.sh')] }] },
 			{ 'deny.sh': `echo '{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"read-only"}}'` },
 		);
-		const { call } = await toolsWith(claudeHooks(dir));
+		const { call } = await toolsWith(claudeHooks());
 		await expect(call('write', { path: 'b.txt', content: 'x' })).rejects.toThrow('read-only');
 		expect(text(await call('bash', { command: 'echo free' }))).toContain('free');
 	});
@@ -93,7 +93,7 @@ describe('claudeHooks', () => {
 	it('treats other exit codes as non-blocking warnings', async () => {
 		claudeProject({ PreToolUse: [{ hooks: [command('broken.sh')] }] }, { 'broken.sh': 'echo oops >&2; exit 1' });
 		const warnings: string[] = [];
-		const { call } = await toolsWith(claudeHooks(dir, { warn: (m) => warnings.push(m) }));
+		const { call } = await toolsWith(claudeHooks({ warn: (m) => warnings.push(m) }));
 		expect(text(await call('bash', { command: 'echo still' }))).toContain('still');
 		expect(warnings.join()).toContain('exited 1 (non-blocking)');
 	});
@@ -106,7 +106,7 @@ describe('claudeHooks', () => {
 		const runs: HookRun[] = [];
 		const stop = onHookRun((run) => runs.push(run));
 		try {
-			const { call } = await toolsWith(claudeHooks(dir, { warn: () => {} }));
+			const { call } = await toolsWith(claudeHooks({ warn: () => {} }));
 			await call('bash', { command: 'echo hi' });
 			await call('read', { path: '.claude/settings.json' });
 		} finally {
@@ -125,19 +125,69 @@ describe('claudeHooks', () => {
 		['PreToolUse is not an array', { PreToolUse: { matcher: 'Bash', hooks: [command('guard.sh')] } }],
 		['a group has no hooks', { PostToolUse: [{ matcher: 'Edit' }] }],
 		['a hook has no command', { PreToolUse: [{ hooks: [{ type: 'command' }] }] }],
-	])('rejects a settings file where %s, naming the file', (_case, hooks) => {
+	])('fails tool calls when a settings file is invalid (%s), naming the file', async (_case, hooks) => {
 		claudeProject(hooks, {});
-		expect(() => claudeHooks(dir)).toThrow(`[fluex] invalid Claude hooks in ${join(dir, '.claude', 'settings.json')}: `);
+		const { call } = await toolsWith(claudeHooks());
+		await expect(call('bash', { command: 'echo hi' })).rejects.toThrow(`[fluex] invalid Claude hooks in ${join(dir, '.claude', 'settings.json')}: `);
 	});
 
-	it('rejects a settings file that is not JSON, naming the file', () => {
+	it('fails tool calls when a settings file is not JSON, naming the file', async () => {
 		claudeProject({}, {});
 		writeFileSync(join(dir, '.claude', 'settings.json'), '{ "hooks": {}, }');
-		expect(() => claudeHooks(dir)).toThrow(`[fluex] invalid Claude hooks in ${join(dir, '.claude', 'settings.json')}: `);
+		const { call } = await toolsWith(claudeHooks());
+		await expect(call('bash', { command: 'echo hi' })).rejects.toThrow(`[fluex] invalid Claude hooks in ${join(dir, '.claude', 'settings.json')}: `);
 	});
 
-	it('ignores events and hooks it does not run', () => {
+	it('ignores events and hooks it does not run', async () => {
 		claudeProject({ Stop: 'anything', PreToolUse: [{ hooks: [{ type: 'prompt', prompt: 'ok?' }] }] }, {});
-		expect(() => claudeHooks(dir)).not.toThrow();
+		const { call } = await toolsWith(claudeHooks());
+		expect(text(await call('bash', { command: 'echo fine' }))).toContain('fine');
+	});
+
+	it('runs no scripts for a sandbox without settings', async () => {
+		const { call } = await toolsWith(claudeHooks());
+		expect(text(await call('bash', { command: 'echo bare' }))).toContain('bare');
+	});
+
+	it('reads each sandbox\'s own settings, so concurrent agents in different checkouts get their own hooks', async () => {
+		const hooks = claudeHooks();
+		const strict = dir;
+		claudeProject({ PreToolUse: [{ matcher: 'Bash', hooks: [command('deny.sh')] }] }, { 'deny.sh': 'echo "strict checkout" >&2; exit 2' });
+		const open = mkdtempSync(join(tmpdir(), 'fluex-hooks-'));
+		const [a, b] = await Promise.all([toolsWith(hooks, local({ cwd: strict })), toolsWith(hooks, local({ cwd: open }))]);
+		const [blocked, passed] = await Promise.allSettled([a.call('bash', { command: 'echo a' }), b.call('bash', { command: 'echo b' })]);
+		expect(blocked).toMatchObject({ status: 'rejected', reason: { message: expect.stringContaining('strict checkout') } });
+		expect(passed).toMatchObject({ status: 'fulfilled' });
+	});
+
+	it('reads the settings once per sandbox, even for parallel first calls', async () => {
+		claudeProject({ PreToolUse: [{ matcher: 'Bash', hooks: [command('ok.sh')] }] }, { 'ok.sh': 'exit 0' });
+		const reads: string[] = [];
+		const counting: SandboxFactory = {
+			async createSandbox(options) {
+				const sandbox = await local({ cwd: dir }).createSandbox(options);
+				return new Proxy(sandbox, {
+					get(target, key) {
+						const value = Reflect.get(target, key, target);
+						if (key === 'readFile') return (path: string) => (reads.push(path), target.readFile(path));
+						return typeof value === 'function' ? value.bind(target) : value;
+					},
+				});
+			},
+		};
+		const { call } = await toolsWith(claudeHooks(), counting);
+		await Promise.all([call('bash', { command: 'echo 1' }), call('bash', { command: 'echo 2' }), call('bash', { command: 'echo 3' })]);
+		expect(reads.filter((path) => path.endsWith('settings.json'))).toEqual([join(dir, '.claude', 'settings.json')]);
+	});
+
+	it('reads the settings from projectDir and exports it as CLAUDE_PROJECT_DIR', async () => {
+		const project = join(dir, 'app');
+		mkdirSync(join(project, '.claude'), { recursive: true });
+		writeFileSync(
+			join(project, '.claude', 'settings.json'),
+			JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo "project=$CLAUDE_PROJECT_DIR" >&2; exit 2' }] }] } }),
+		);
+		const { call } = await toolsWith(claudeHooks({ projectDir: 'app' }));
+		await expect(call('bash', { command: 'echo hi' })).rejects.toThrow(`project=${project}`);
 	});
 });

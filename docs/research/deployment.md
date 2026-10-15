@@ -14,7 +14,7 @@ of what `auto/target-app-flue` has today?
 | Piece | Today (`auto/target-app-flue`) |
 |---|---|
 | Agents | `smoke`, `implementer`, each `'use agent'`; run by `flue run` (`pnpm implement --data '{"issue":65}'`) |
-| Sandbox | `withToolHooks(local({ cwd: TARGET_REPO, env: gradleEnv }), claudeHooks(TARGET_REPO))` |
+| Sandbox | `withToolHooks(local({ cwd: TARGET_REPO, env: gradleEnv }), claudeHooks())` |
 | Model auth | `usePiSubscription('openai-codex')` at agent-module top level |
 | Records | `runs/<id>/events.jsonl` (`logToolCalls`), `runs/<id>/result.json` (implementer `useAgentFinish`) |
 | Database | `src/db.ts` → `sqlite('./data/flue.db')` |

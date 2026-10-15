@@ -190,7 +190,7 @@ Decided in the Milestone 3–4 grilling (2026-10-13).
 - Env: explicit only, never the host environment; values reach `docker` through the CLI child's environment (`-e KEY`), never argv; known values redacted from errors and logs.
 - `buildImage({ dockerfile, context, tag })` runs `docker build -q` and returns the image ID (Docker's layer cache keeps it cheap).
 - `removeSandbox(key)`, `listSandboxes()`, `pruneSandboxes({ olderThan?, state? })` select by exact fluex labels only. No exit or signal handlers: Flue forbids adapter teardown, and a keyed container is meant to outlive the process.
-- Composes with `flue-hooks`: `withToolHooks(docker(…), claudeHooks(repo))` runs Claude hooks inside the container through `sandbox.exec`.
+- Composes with `flue-hooks`: `withToolHooks(docker(…), claudeHooks())` reads `.claude/settings.json` and runs Claude hooks inside the container through `sandbox.exec`.
 
 Not ported from automaton (questioned during the grilling): `tail -f /dev/null` keep-alive, `-e K=V` in argv, the `~/.gitconfig` mount (git identity goes in as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`), Dockerfile-hash image tags, `rm -f` on process exit, the three sandbox lifecycle hook slots (backlog).
 
