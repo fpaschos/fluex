@@ -1,12 +1,12 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SandboxFactory } from '@flue/runtime';
+import type { FlueEventContext, FlueObservation, FlueObservationSubscriber, SandboxFactory } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { claudeHooks } from '../src/claude-hooks.ts';
-import { type HookRun, onHookRun } from '../src/hook-reports.ts';
-import { type ToolInterceptor, withInterceptors } from '../src/interceptors.ts';
+import { type HookRun, type ToolInterceptor, type ToolResult, withInterceptors } from '../src/interceptors.ts';
+import { toolLog } from '../src/tool-log.ts';
 
 let dir: string;
 beforeEach(() => {
@@ -42,7 +42,8 @@ describe('claudeHooks', () => {
 			{ 'guard.sh': `cmd="$(jq -r .tool_input.command)"; [[ "$cmd" == find* ]] && { echo "use fd" >&2; exit 2; }; exit 0` },
 		);
 		const { call } = await toolsWith(claudeHooks());
-		await expect(call('bash', { command: 'find .' })).rejects.toMatchObject({ code: 'FLUEX_TOOL_BLOCKED', message: 'Blocked by PreToolUse hook:\nuse fd' });
+		const message = 'PreToolUse:Bash hook blocked [${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh] (exit 2):\nuse fd';
+		await expect(call('bash', { command: 'find .' })).rejects.toMatchObject({ code: 'FLUEX_TOOL_BLOCKED', message });
 		expect(text(await call('bash', { command: 'echo fine' }))).toContain('fine');
 	});
 
@@ -108,27 +109,26 @@ describe('claudeHooks', () => {
 		expect(warnings.join()).toContain('exited 1 (non-blocking)');
 	});
 
-	it('reports every script it runs, whatever the outcome', async () => {
+	it('records every script it runs in details.fluex.hookRuns, whatever the outcome', async () => {
 		claudeProject(
-			{ PreToolUse: [{ matcher: 'Bash', hooks: [command('ok.sh'), command('broken.sh')] }] },
-			{ 'ok.sh': 'exit 0', 'broken.sh': 'exit 1' },
+			{
+				PreToolUse: [{ matcher: 'Bash', hooks: [command('ok.sh'), command('broken.sh')] }],
+				PostToolUse: [{ matcher: 'Bash', hooks: [command('lint.sh')] }],
+			},
+			{ 'ok.sh': 'exit 0', 'broken.sh': 'exit 1', 'lint.sh': 'exit 0' },
 		);
-		const runs: HookRun[] = [];
-		const stop = onHookRun((run) => runs.push(run));
-		try {
-			const { call } = await toolsWith(claudeHooks({ warn: () => {} }));
-			await call('bash', { command: 'echo hi' });
-			await call('read', { path: '.claude/settings.json' });
-		} finally {
-			stop();
-		}
-		// Scripts of one event run in parallel, so they report in completion order.
-		const byCommand = runs.toSorted((x, y) => y.command.localeCompare(x.command));
-		expect(byCommand.map(({ toolCallId, tool, event, command, exitCode }) => ({ toolCallId, tool, event, command, exitCode }))).toEqual([
-			{ toolCallId: 'call-bash', tool: 'bash', event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/ok.sh', exitCode: 0 },
-			{ toolCallId: 'call-bash', tool: 'bash', event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/broken.sh', exitCode: 1 },
+		const { call } = await toolsWith(claudeHooks({ warn: () => {} }));
+		const bash = await call('bash', { command: 'echo hi' });
+		const read = await call('read', { path: '.claude/settings.json' });
+		const hookRuns = (bash.details as { fluex: { hookRuns: HookRun[] } }).fluex.hookRuns;
+		expect(hookRuns.map(({ event, command, exitCode }) => ({ event, command, exitCode }))).toEqual([
+			{ event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/ok.sh', exitCode: 0 },
+			{ event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/broken.sh', exitCode: 1 },
+			{ event: 'PostToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/lint.sh', exitCode: 0 },
 		]);
-		expect(runs.every((r) => r.durationMs >= 0)).toBe(true);
+		expect(hookRuns.every((run) => run.durationMs >= 0)).toBe(true);
+		expect(text(bash)).not.toContain('ok.sh');
+		expect(read.details).not.toHaveProperty('fluex');
 	});
 
 	it.each([
@@ -263,5 +263,59 @@ describe('claudeHooks', () => {
 		);
 		const { call } = await toolsWith(claudeHooks({ projectDir: 'app' }));
 		await expect(call('bash', { command: 'echo hi' })).rejects.toThrow(`project=${project}`);
+	});
+});
+
+describe('claudeHooks seen by toolLog', () => {
+	/** Run one intercepted call and feed `subscriber` the observations Flue would emit for it. */
+	async function observed(subscriber: FlueObservationSubscriber, run: () => Promise<ToolResult>, toolCallId: string, toolName: string, args: object) {
+		const base = { instanceId: 'impl-1', timestamp: '2026-10-16T10:00:00.000Z', toolCallId, toolName };
+		const context = {} as FlueEventContext;
+		subscriber({ ...base, type: 'tool_start', args } as FlueObservation, context);
+		const end = { ...base, type: 'tool', durationMs: 100 };
+		try {
+			const result = await run();
+			subscriber({ ...end, isError: false, result } as FlueObservation, context);
+		} catch (error) {
+			// As Flue's `classifyError`: `type` from `code`, then `name`; other error properties are dropped.
+			const { name, code, message } = error as { name: string; code?: string; message: string };
+			const errorInfo = { type: code ?? name, name, ...(code ? { code } : {}), message };
+			const result = { content: [{ type: 'text', text: message }], details: {} };
+			subscriber({ ...end, isError: true, result, errorInfo } as FlueObservation, context);
+		}
+	}
+
+	it('renders each catch with its script, exit code and full output, on the call it belongs to', async () => {
+		claudeProject(
+			{
+				PreToolUse: [{ matcher: 'Bash', hooks: [command('guard.sh'), command('ok.sh')] }],
+				PostToolUse: [{ matcher: 'Edit', hooks: [command('lint.sh')] }],
+			},
+			{
+				'guard.sh': 'printf "use fd\\nnot find\\n" >&2; exit 2',
+				'ok.sh': 'exit 0',
+				'lint.sh': 'echo "TODO left" >&2; exit 2',
+			},
+		);
+		writeFileSync(join(dir, 'A.kt'), 'fun a() = 1\n');
+		const lines: string[] = [];
+		const subscriber = toolLog({ runsDir: false, write: (line) => lines.push(line) });
+		const { call } = await toolsWith(claudeHooks());
+
+		const find = { command: 'find .' };
+		await observed(subscriber, () => call('bash', find), 'call-bash', 'bash', find);
+		const edit = { path: 'A.kt', oldText: '= 1', newText: '= 2' };
+		await observed(subscriber, () => call('edit', edit), 'call-edit', 'edit', edit);
+
+		expect(lines).toEqual([
+			'[impl-1] #1 hook PreToolUse guard.sh BLOCKED bash (exit 2):',
+			'[impl-1] #1    use fd',
+			'[impl-1] #1    not find',
+			expect.stringMatching(/^\[impl-1\] #1 bash\(find \.\) ✗ exit \? · 0\.1s · \d+B · blocked$/),
+			expect.stringMatching(/^\[impl-1\] #2 hook PostToolUse lint\.sh ✗ exit 2 · \d+\.\ds$/),
+			'[impl-1] #2 hook PostToolUse lint.sh feedback edit (exit 2):',
+			'[impl-1] #2    TODO left',
+			'[impl-1] #2 edit(A.kt, +1 -1) ✓ 0.1s',
+		]);
 	});
 });

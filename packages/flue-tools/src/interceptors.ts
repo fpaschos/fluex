@@ -43,10 +43,13 @@ export interface ToolInterceptor {
 	intercept(call: ToolCall, next: Next): Promise<ToolResult>;
 }
 
+/** The `code` of a {@link ToolBlockedError}, as observers see it in a `tool` observation's `errorInfo`. */
+export const TOOL_BLOCKED = 'FLUEX_TOOL_BLOCKED';
+
 /** The error a blocked call throws: pi-agent-core turns it into the tool error the model reads. */
 export class ToolBlockedError extends Error {
 	override readonly name = 'ToolBlockedError';
-	readonly code = 'FLUEX_TOOL_BLOCKED';
+	readonly code = TOOL_BLOCKED;
 }
 
 /** Stop the call without running the tool; `reason` is the tool error the model sees. */
@@ -58,6 +61,16 @@ export function blocked(reason: string): never {
 export interface FluexDetails {
 	/** Texts appended by {@link withContext}, in order. */
 	context?: string[];
+	/** Hook scripts `claudeHooks` ran for the call, whatever their outcome. */
+	hookRuns?: HookRun[];
+}
+
+/** One hook script run by `claudeHooks`. */
+export interface HookRun {
+	event: 'PreToolUse' | 'PostToolUse';
+	command: string;
+	exitCode: number;
+	durationMs: number;
 }
 
 /** Append `text` to the result the model reads, and record it in `result.details.fluex.context`. */

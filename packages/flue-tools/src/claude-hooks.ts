@@ -2,8 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { Sandbox } from '@flue/runtime';
 import * as v from 'valibot';
-import { reportHook, reportHookRun } from './hook-reports.ts';
-import { blocked, type ToolCall, type ToolInterceptor, withContext } from './interceptors.ts';
+import {
+	blocked,
+	type FluexDetails,
+	type HookRun,
+	type ToolCall,
+	type ToolInterceptor,
+	type ToolResult,
+	withContext,
+} from './interceptors.ts';
 
 /** Flue sandbox tool → Claude Code tool name, as hook matchers see it. */
 const CLAUDE_TOOL: Record<string, string> = { read: 'Read', write: 'Write', edit: 'Edit', bash: 'Bash', grep: 'Grep', glob: 'Glob' };
@@ -77,55 +84,57 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 			if (!call.sandbox) return next();
 			const sandboxCall = { ...call, sandbox: call.sandbox };
 
-			const preOutcomes = await run('PreToolUse', sandboxCall, {});
+			const preRuns = await run('PreToolUse', sandboxCall, {});
 			const blocks: string[] = [];
 			const preContext: string[] = [];
 			let input = call.input;
-			for (const outcome of preOutcomes) {
-				if (outcome?.block) blocks.push(outcome.block);
-				if (outcome?.context) preContext.push(outcome.context);
+			for (const scriptRun of preRuns) {
+				const { outcome } = scriptRun;
+				if (outcome?.block) blocks.push(caught('blocked', call.tool, scriptRun, outcome.block));
+				if (outcome?.context) preContext.push(caught('context', call.tool, scriptRun, outcome.context));
 				if (outcome?.updatedInput) {
 					const updated = flueInput(call.tool, outcome.updatedInput);
 					input = { ...input, ...updated };
 				}
 			}
-			if (blocks.length > 0) {
-				const text = blocks.join('\n');
-				reportHook({
-					toolCallId: call.toolCallId,
-					tool: call.tool,
-					event: 'PreToolUse',
-					outcome: 'blocked',
-					text,
-				});
-				blocked(`Blocked by PreToolUse hook:\n${text}`);
-			}
+			// A call that throws (blocked here, or failing in the tool) has no result to record script runs on.
+			if (blocks.length > 0) blocked(blocks.join('\n\n'));
 
 			const toolResult = await next(input);
-			const contextText = `PreToolUse hook context:\n${preContext.join('\n')}`;
-			const result = preContext.length === 0 ? toolResult : withContext(toolResult, contextText);
+			const result = preContext.reduce(withContext, toolResult);
 
 			// As in Claude Code: the input the tool ran with, and its own response.
 			const ranCall = { ...sandboxCall, input };
 			const toolResponse = { content: toolResult.content, details: toolResult.details };
-			const postOutcomes = await run('PostToolUse', ranCall, { tool_response: toolResponse });
+			const postRuns = await run('PostToolUse', ranCall, { tool_response: toolResponse });
 			const feedback: string[] = [];
-			for (const outcome of postOutcomes) {
-				if (outcome?.context) feedback.push(outcome.context);
+			for (const scriptRun of postRuns) {
+				const { outcome } = scriptRun;
+				if (outcome?.context) feedback.push(caught('feedback', call.tool, scriptRun, outcome.context));
 			}
-			if (feedback.length === 0) return result;
+			const withFeedback = feedback.reduce(withContext, result);
 
-			const text = feedback.join('\n');
-			reportHook({
-				toolCallId: call.toolCallId,
-				tool: call.tool,
-				event: 'PostToolUse',
-				outcome: 'feedback',
-				text,
-			});
-			return withContext(result, `PostToolUse hook feedback:\n${text}`);
+			const scriptRuns = [...preRuns, ...postRuns];
+			const hookRunOf = ({ hookRun }: ScriptRun) => hookRun;
+			const hookRuns = scriptRuns.map(hookRunOf);
+			if (hookRuns.length === 0) return withFeedback;
+			return withHookRuns(withFeedback, hookRuns);
 		},
 	};
+}
+
+/** One script's catch, headed as Claude Code names hooks: `PreToolUse:Bash hook blocked [<command>] (exit 2):`; `ToolLog` parses it. */
+function caught(kind: 'blocked' | 'context' | 'feedback', tool: string, { hookRun }: ScriptRun, text: string): string {
+	const { event, command, exitCode } = hookRun;
+	return `${event}:${CLAUDE_TOOL[tool]} hook ${kind} [${command}] (exit ${exitCode}):\n${text}`;
+}
+
+/** Append `runs` to `result.details.fluex.hookRuns`, for observers; the text the model reads is unchanged. */
+function withHookRuns(result: ToolResult, runs: HookRun[]): ToolResult {
+	const details = (result.details ?? {}) as { fluex?: FluexDetails };
+	const hookRuns = [...(details.fluex?.hookRuns ?? []), ...runs];
+	const fluex = { ...details.fluex, hookRuns };
+	return { ...result, details: { ...details, fluex } };
 }
 
 /** The matcher groups of every settings file present under `<projectDir>/.claude/`, merged in order. */
@@ -232,7 +241,7 @@ async function runHook(
 	extra: object,
 	projectDir: string,
 	warn: (message: string) => void,
-): Promise<HookOutcome | undefined> {
+): Promise<ScriptRun> {
 	const { sandbox } = call;
 	const stdin = JSON.stringify({
 		session_id: '',
@@ -254,16 +263,30 @@ async function runHook(
 			signal: call.signal,
 		});
 		const durationMs = Math.round(performance.now() - started);
-		reportHookRun({ toolCallId: call.toolCallId, tool: call.tool, event, command: hook.command, exitCode, durationMs });
-		if (exitCode === 2) return event === 'PreToolUse' ? { block: stderr.trim() } : { context: stderr.trim() };
+		const hookRun: HookRun = {
+			event,
+			command: hook.command,
+			exitCode,
+			durationMs,
+		};
+		if (exitCode === 2) {
+			const outcome = event === 'PreToolUse' ? { block: stderr.trim() } : { context: stderr.trim() };
+			return { hookRun, outcome };
+		}
 		if (exitCode !== 0) {
 			warn(`[fluex] ${event} hook exited ${exitCode} (non-blocking): ${hook.command}\n${stderr.trim()}`);
-			return undefined;
+			return { hookRun };
 		}
-		return decision(event, stdout);
+		return { hookRun, outcome: decision(event, stdout) };
 	} finally {
 		await sandbox.rm(stdinFile, { force: true }).catch(() => {});
 	}
+}
+
+/** One script that ran, and what it asked for, if anything. */
+interface ScriptRun {
+	hookRun: HookRun;
+	outcome?: HookOutcome;
 }
 
 /** What one script asks: block the call, append `context` to its result, or rewrite its input (Claude shape). */

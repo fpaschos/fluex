@@ -3,13 +3,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FlueObservation } from '@flue/runtime';
 import { describe, expect, it } from 'vitest';
-import { lineDiff, ToolLog } from '../src/tool-log.ts';
+import { lineDiff, ToolLog, toolLog } from '../src/tool-log.ts';
 
 const ev = (e: Record<string, unknown>) => ({ instanceId: 'impl-1', timestamp: '2026-10-13T10:00:00.000Z', ...e }) as unknown as FlueObservation;
 const start = (toolCallId: string, toolName: string, args: unknown) => ev({ type: 'tool_start', toolCallId, toolName, args });
 const end = (toolCallId: string, toolName: string, result: unknown, isError = false, durationMs = 1500) =>
 	ev({ type: 'tool', toolCallId, toolName, isError, result, durationMs });
-const text = (t: string, exitCode?: number) => ({ content: [{ type: 'text', text: t }], details: exitCode === undefined ? {} : { exitCode } });
+const text = (t: string, exitCode?: number, fluex?: object) => ({
+	content: [{ type: 'text', text: t }],
+	details: { ...(exitCode === undefined ? {} : { exitCode }), ...(fluex ? { fluex } : {}) },
+});
+/** A call an interceptor blocked, as Flue observes it: the error text as result, the error in `errorInfo`. */
+const blockedEnd = (toolCallId: string, toolName: string, message: string) =>
+	({
+		...end(toolCallId, toolName, text(message), true),
+		errorInfo: { type: 'FLUEX_TOOL_BLOCKED', name: 'ToolBlockedError', code: 'FLUEX_TOOL_BLOCKED', message },
+	}) as FlueObservation;
 
 function setup() {
 	const runsDir = mkdtempSync(join(tmpdir(), 'fluex-log-'));
@@ -51,27 +60,91 @@ describe('ToolLog', () => {
 		expect(lines[0]).toMatch(/^\[impl-1\] #1 bash\(glab issue list .*x… ✓ exit 0 · 0\.8s · 2B$/);
 	});
 
-	it('shows hook blocks and feedback on the call they belong to', () => {
+	it('shows each hook catch with its script, exit code and full output, on its call', () => {
 		const { log, lines, events } = setup();
+		const guard = '${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh';
+		const policy = '${CLAUDE_PROJECT_DIR}/.claude/hooks/policy.sh';
+		const lint = '${CLAUDE_PROJECT_DIR}/.claude/hooks/kotlin-lint.sh';
+		const block = [
+			`PreToolUse:Bash hook blocked [${guard}] (exit 2):\nBlocked: use 'fd' instead of 'find'`,
+			`PreToolUse:Bash hook blocked [${policy}] (exit 0):\nread-only checkout`,
+		].join('\n\n');
+		const feedback = `PostToolUse:Edit hook feedback [${lint}] (exit 2):\nast-grep findings in A.kt:\nwarning[no-println]\nline 3`;
 		log.record(start('a', 'bash', { command: 'find . -name x' }));
-		log.hook({ toolCallId: 'a', tool: 'bash', event: 'PreToolUse', outcome: 'blocked', text: "Blocked: use 'fd' instead of 'find'" });
-		log.record(end('a', 'bash', { message: 'Blocked by PreToolUse hook' }, true));
+		log.record(blockedEnd('a', 'bash', block));
 		log.record(start('b', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
-		log.hook({ toolCallId: 'b', tool: 'edit', event: 'PostToolUse', outcome: 'feedback', text: 'ast-grep findings in A.kt:\nwarning[no-println]\nline 3' });
-		expect(lines).toContain("[impl-1] #1 hook PreToolUse BLOCKED bash: Blocked: use 'fd' instead of 'find'");
-		expect(lines).toContain('[impl-1] #2 hook PostToolUse feedback edit: ast-grep findings in A.kt: (+2 lines)');
-		expect(events().filter((e) => e.type === 'hook').map((e) => e.outcome)).toEqual(['blocked', 'feedback']);
+		log.record(end('b', 'edit', text('Successfully edited A.kt', undefined, { context: [feedback] })));
+		log.record(ev({ type: 'submission_settled', outcome: 'completed' }));
+		expect(lines.slice(0, -1)).toEqual([
+			'[impl-1] #1 hook PreToolUse guard.sh BLOCKED bash (exit 2):',
+			"[impl-1] #1    Blocked: use 'fd' instead of 'find'",
+			'[impl-1] #1 hook PreToolUse policy.sh BLOCKED bash (exit 0):',
+			'[impl-1] #1    read-only checkout',
+			'[impl-1] #1 bash(find . -name x) ✗ exit ? · 1.5s · 228B · blocked',
+			'[impl-1] #2 hook PostToolUse kotlin-lint.sh feedback edit (exit 2):',
+			'[impl-1] #2    ast-grep findings in A.kt:',
+			'[impl-1] #2    warning[no-println]',
+			'[impl-1] #2    line 3',
+			'[impl-1] #2 edit(A.kt, +1 -1) ✓ 1.5s',
+		]);
+		expect(lines.at(-1)).toMatch(/^\[impl-1\] done completed · 0 turns · 2 tools \(1 errors, 1 blocked\) · /);
+		const hookEvents = events().filter((e) => e.type === 'hook');
+		expect(hookEvents.map(({ event, outcome, command, exitCode, text }) => ({ event, outcome, command, exitCode, text }))).toEqual([
+			{ event: 'PreToolUse', outcome: 'blocked', command: guard, exitCode: 2, text: "Blocked: use 'fd' instead of 'find'" },
+			{ event: 'PreToolUse', outcome: 'blocked', command: policy, exitCode: 0, text: 'read-only checkout' },
+			{ event: 'PostToolUse', outcome: 'feedback', command: lint, exitCode: 2, text: 'ast-grep findings in A.kt:\nwarning[no-println]\nline 3' },
+		]);
+	});
+
+	it('shows at most 20 lines of a catch', () => {
+		const { log, lines } = setup();
+		const output = Array.from({ length: 25 }, (_, i) => `finding ${i + 1}`).join('\n');
+		log.record(start('a', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
+		log.record(end('a', 'edit', text('Successfully edited A.kt', undefined, { context: [`PostToolUse:Edit hook feedback [lint.sh] (exit 2):\n${output}`] })));
+		expect(lines).toHaveLength(23);
+		expect(lines.slice(20, 22)).toEqual(['[impl-1] #1    finding 20', '[impl-1] #1    … +5 lines']);
+	});
+
+	it('shows blocks and context from any interceptor', () => {
+		const { log, lines, events } = setup();
+		log.record(start('a', 'bash', { command: 'rm x' }));
+		log.record(blockedEnd('a', 'bash', 'no rm'));
+		log.record(start('b', 'write', { path: 'a.txt', content: 'hi' }));
+		log.record(end('b', 'write', text('Successfully wrote', undefined, { context: ['write touched a.txt'] }), false, 20));
+		expect(lines).toEqual([
+			'[impl-1] #1 BLOCKED bash:',
+			'[impl-1] #1    no rm',
+			'[impl-1] #1 bash(rm x) ✗ exit ? · 1.5s · 5B · blocked',
+			'[impl-1] #2 context write:',
+			'[impl-1] #2    write touched a.txt',
+			'[impl-1] #2 write(a.txt, 1 lines) ✓ 0.0s',
+		]);
+		const notes = events().filter((e) => e.type === 'blocked' || e.type === 'context');
+		expect(notes.map((e) => [e.type, e.text])).toEqual([
+			['blocked', 'no rm'],
+			['context', 'write touched a.txt'],
+		]);
+	});
+
+	it('is mounted as an observe() subscriber', () => {
+		const runsDir = mkdtempSync(join(tmpdir(), 'fluex-log-'));
+		const lines: string[] = [];
+		const subscriber = toolLog({ runsDir, write: (l) => lines.push(l) });
+		const context = {} as Parameters<typeof subscriber>[1];
+		subscriber(start('a', 'bash', { command: 'ls' }), context);
+		subscriber(end('a', 'bash', text('a.txt', 0)), context);
+		expect(lines).toEqual(['[impl-1] #1 bash(ls) ✓ exit 0 · 1.5s · 5B']);
 	});
 
 	it('logs every hook script run on its call, and counts them when settled', () => {
 		const { log, lines, events } = setup();
-		log.record(start('a', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
 		const lint = '${CLAUDE_PROJECT_DIR}/.claude/hooks/kotlin-lint.sh';
-		log.hookRun({ toolCallId: 'a', tool: 'edit', event: 'PostToolUse', command: lint, exitCode: 0, durationMs: 312 });
-		log.record(end('a', 'edit', text('Successfully edited A.kt')));
+		const lintRun = { event: 'PostToolUse', command: lint, exitCode: 0, durationMs: 312 };
+		log.record(start('a', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
+		log.record(end('a', 'edit', text('Successfully edited A.kt', undefined, { hookRuns: [lintRun] })));
+		const guardRun = { event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh', exitCode: 1, durationMs: 40 };
 		log.record(start('b', 'bash', { command: 'ls' }));
-		log.hookRun({ toolCallId: 'b', tool: 'bash', event: 'PreToolUse', command: '${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh', exitCode: 1, durationMs: 40 });
-		log.record(end('b', 'bash', text('a.txt', 0)));
+		log.record(end('b', 'bash', text('a.txt', 0, { hookRuns: [guardRun] })));
 		log.record(ev({ type: 'submission_settled', outcome: 'completed' }));
 		expect(lines).toEqual([
 			'[impl-1] #1 hook PostToolUse kotlin-lint.sh ✓ exit 0 · 0.3s',
