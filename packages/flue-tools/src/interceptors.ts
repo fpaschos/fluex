@@ -70,7 +70,7 @@ export function withContext(result: ToolResult, text: string): ToolResult {
 }
 
 /** Flue's default sandbox tool set — what the runtime installs when a factory has no `tools`. */
-const defaultTools: SandboxToolFactory = (sandbox) => [
+export const defaultTools: SandboxToolFactory = (sandbox) => [
 	createReadTool(sandbox),
 	createWriteTool(sandbox),
 	createEditTool(sandbox),

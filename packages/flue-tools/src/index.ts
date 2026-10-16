@@ -11,5 +11,6 @@ export {
 	withContext,
 	withInterceptors,
 } from './interceptors.ts';
+export { type NameFilter, withSandboxTools, withSkills } from './filters.ts';
 export { type HookReport, type HookRun, onHookReport, onHookRun } from './hook-reports.ts';
 export { logToolCalls, ToolLog, type ToolLogOptions } from './tool-log.ts';
