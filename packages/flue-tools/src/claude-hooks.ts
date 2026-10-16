@@ -8,9 +8,6 @@ import { blocked, type ToolCall, type ToolInterceptor, withContext } from './int
 /** Flue sandbox tool → Claude Code tool name, as hook matchers see it. */
 const CLAUDE_TOOL: Record<string, string> = { read: 'Read', write: 'Write', edit: 'Edit', bash: 'Bash', grep: 'Grep', glob: 'Glob' };
 
-/** A matcher of only these characters is a tool name, or a list of names; anything else is a regex. */
-const NAME_LIST = /^[A-Za-z0-9_\- ,|]*$/;
-
 /** A hook entry; only `command` hooks are run, others (`prompt`, `agent`) are ignored. */
 const HookSchema = v.pipe(
 	v.looseObject({
@@ -21,19 +18,9 @@ const HookSchema = v.pipe(
 	}),
 	v.check((hook) => hook.type !== 'command' || hook.command !== undefined, 'a command hook needs a `command`'),
 );
-/** Whether `matcher`, when it is a regex (not a plain name list), compiles. */
-function validMatcher(matcher: string): boolean {
-	if (matcher === '*' || NAME_LIST.test(matcher)) return true;
-	try {
-		new RegExp(matcher);
-		return true;
-	} catch {
-		return false;
-	}
-}
 /** A matcher group. */
 const MatcherGroupSchema = v.object({
-	matcher: v.optional(v.pipe(v.string(), v.check(validMatcher, 'a matcher must be a tool name list or a valid regex'))),
+	matcher: v.optional(v.string()),
 	hooks: v.array(HookSchema),
 });
 /** The parts of a Claude settings file fluex runs; other keys and events are left unchecked. */
@@ -69,7 +56,7 @@ export interface ClaudeHooksOptions {
  *
  * Matchers follow Claude Code and use Claude tool names (`Edit`, not `edit`): `*` or empty
  * matches all; a matcher of only `[A-Za-z0-9_\- ,|]` is an exact name or a `|`/`,` list;
- * anything else is an unanchored regex. A matcher on a tool fluex does not intercept
+ * anything else is an unanchored regex. A plain matcher naming a tool fluex does not intercept
  * (`Skill`, `Agent`, `mcp__*`, …) gets one warning when the settings load.
  *
  * The settings are read through the sandbox, once per submission (one `createSandbox()`), on its
@@ -172,24 +159,12 @@ async function load(sandbox: Sandbox, projectDir: string, files: string[], warn:
 	return groups;
 }
 
-/** Claude Code tools fluex has no Flue tool for, to test regex matchers against; `mcp__*` tools aside. */
-const OTHER_CLAUDE_TOOLS = ['Agent', 'Task', 'Skill', 'NotebookEdit', 'MultiEdit', 'WebFetch', 'WebSearch', 'TodoWrite', 'LS', 'ExitPlanMode'];
-
-/** The tools `matcher` targets that fluex does not intercept, as `matcher` (tool) or the name itself. */
+/** The tool names a plain matcher lists that fluex does not intercept; regex matchers are not checked. */
 function notIntercepted(matcher: string | undefined): string[] {
-	if (!matcher || matcher === '*') return [];
+	if (!matcher || !NAME_LIST.test(matcher)) return [];
 	const intercepted = Object.values(CLAUDE_TOOL);
-	if (NAME_LIST.test(matcher)) {
-		const names = toolNames(matcher);
-		return names.filter((name) => !intercepted.includes(name));
-	}
-	const regex = new RegExp(matcher);
-	// A regex matching every intercepted tool (`.*`) is a catch-all, like `*`.
-	const matchesName = (name: string) => regex.test(name);
-	if (intercepted.every(matchesName)) return [];
-	const candidates = [...OTHER_CLAUDE_TOOLS, 'mcp__server__tool'];
-	const hits = candidates.filter(matchesName);
-	return hits.map((name) => `${matcher} (${name})`);
+	const names = toolNames(matcher);
+	return names.filter((name) => !intercepted.includes(name));
 }
 
 /** The settings in `text` (read from `path`), or an error naming the file and what is wrong with it. */
@@ -213,6 +188,9 @@ function matching(groups: MatcherGroup[], tool: string): CommandHook[] {
 	const selected = groups.filter(({ matcher }) => matches(matcher, name));
 	return selected.flatMap(({ hooks }) => hooks.filter(isCommand));
 }
+
+/** A matcher of only these characters is a tool name, or a list of names; anything else is a regex. */
+const NAME_LIST = /^[A-Za-z0-9_\- ,|]*$/;
 
 /**
  * Claude Code's matcher rules: `*` or empty matches every tool; a plain matcher is an exact name,
@@ -348,9 +326,7 @@ function decision(event: HookEvent, stdout: string): HookOutcome | undefined {
 		if (out.decision === 'block') return { block: out.reason ?? 'blocked by hook' };
 		const outcome: HookOutcome = {};
 		if (specific?.additionalContext) outcome.context = specific.additionalContext;
-		const updated = specific?.updatedInput;
-		const isObject = typeof updated === 'object' && updated !== null && !Array.isArray(updated);
-		if (isObject) outcome.updatedInput = updated;
+		if (specific?.updatedInput) outcome.updatedInput = specific.updatedInput;
 		return outcome;
 	}
 	const feedback = [out.decision === 'block' ? out.reason : undefined, specific?.additionalContext].filter(Boolean).join('\n');
