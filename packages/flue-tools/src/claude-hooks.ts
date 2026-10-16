@@ -46,29 +46,18 @@ export interface ClaudeHooksOptions {
 }
 
 /**
- * Load Claude Code `PreToolUse` / `PostToolUse` command hooks from a project's
- * `.claude/settings.json` (+ `settings.local.json`) as a {@link ToolInterceptor}, for
- * {@link withInterceptors}. Scripts run unchanged, inside the sandbox, with Claude's stdin
- * JSON and exit-code contract: 0 passes (stdout JSON `decision`/`permissionDecision`
- * honoured), 2 blocks (pre) or feeds stderr back to the model (post), anything else is a
- * non-blocking warning. A PreToolUse `additionalContext` is appended to the result and an
- * `updatedInput` is what the tool runs with. Other events and non-`command` hooks are ignored.
+ * Claude Code `PreToolUse` / `PostToolUse` command hooks from `.claude/settings*.json`, as a
+ * {@link ToolInterceptor}. Scripts run in the sandbox with Claude's stdin JSON and exit codes:
+ * 0 passes (stdout JSON honoured: `deny`/`block`, pre `additionalContext` and `updatedInput`),
+ * 2 blocks (pre) or feeds stderr back (post), anything else warns. Matchers use Claude tool
+ * names and Claude's rules; a plain matcher naming a tool fluex does not intercept warns once.
  *
- * Matchers follow Claude Code and use Claude tool names (`Edit`, not `edit`): `*` or empty
- * matches all; a matcher of only `[A-Za-z0-9_\- ,|]` is an exact name or a `|`/`,` list;
- * anything else is an unanchored regex. A plain matcher naming a tool fluex does not intercept
- * (`Skill`, `Agent`, `mcp__*`, …) gets one warning when the settings load.
- *
- * The settings are read through the sandbox, once per submission (one `createSandbox()`), on its
- * first tool call: settings and scripts come from the same checkout, whether it is mounted from the
- * host or cloned inside. A model's edit to `.claude/settings*.json` takes effect on the next
- * submission. An invalid settings file fails every tool call of that submission, naming the file.
+ * Settings are read once per submission, so a model's edit to them takes effect on the next
+ * submission. An invalid settings file fails every call of that submission, naming the file.
  */
 export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 	const { files = ['settings.json', 'settings.local.json'], warn = (m) => console.warn(m) } = options;
-	// Keyed by submission (`call.session`): each has its own sandbox, so concurrent agents read their own
-	// checkout. Not by `call.sandbox`, which Flue rebuilds at every turn. The promise is cached, so parallel
-	// first calls share one read.
+	// Per submission, not per `call.sandbox` (rebuilt every turn); the promise covers parallel first calls.
 	const loaded = new WeakMap<object, Promise<Groups>>();
 	const run = async (event: HookEvent, call: SandboxCall, extra: object) => {
 		const projectDir = options.projectDir === undefined ? call.sandbox.cwd : call.sandbox.resolvePath(options.projectDir);
@@ -116,13 +105,13 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 			const contextText = `PreToolUse hook context:\n${preContext.join('\n')}`;
 			const result = preContext.length === 0 ? toolResult : withContext(toolResult, contextText);
 
-			// PostToolUse sees the input the tool ran with and the tool's own response, as in Claude Code.
+			// As in Claude Code: the input the tool ran with, and its own response.
 			const ranCall = { ...sandboxCall, input };
 			const toolResponse = { content: toolResult.content, details: toolResult.details };
 			const postOutcomes = await run('PostToolUse', ranCall, { tool_response: toolResponse });
 			const feedback: string[] = [];
 			for (const outcome of postOutcomes) {
-				if (outcome?.feedback) feedback.push(outcome.feedback);
+				if (outcome?.context) feedback.push(outcome.context);
 			}
 			if (feedback.length === 0) return result;
 
@@ -150,17 +139,13 @@ async function load(sandbox: Sandbox, projectDir: string, files: string[], warn:
 		groups.PostToolUse.push(...(hooks.PostToolUse ?? []));
 	}
 	const allGroups = [...groups.PreToolUse, ...groups.PostToolUse];
-	const skippedOf = ({ matcher }: MatcherGroup) => notIntercepted(matcher);
-	const skipped = allGroups.flatMap(skippedOf);
-	if (skipped.length > 0) {
-		const list = [...new Set(skipped)].join(', ');
-		warn(`[fluex] Claude hooks on tools fluex does not intercept never run: ${list}`);
-	}
+	const skipped = new Set(allGroups.flatMap(notIntercepted));
+	if (skipped.size > 0) warn(`[fluex] Claude hooks on tools fluex does not intercept never run: ${[...skipped].join(', ')}`);
 	return groups;
 }
 
-/** The tool names a plain matcher lists that fluex does not intercept; regex matchers are not checked. */
-function notIntercepted(matcher: string | undefined): string[] {
+/** Tools a plain matcher names that fluex does not intercept; regexes are not checked. */
+function notIntercepted({ matcher }: MatcherGroup): string[] {
 	if (!matcher || !NAME_LIST.test(matcher)) return [];
 	const intercepted = Object.values(CLAUDE_TOOL);
 	const names = toolNames(matcher);
@@ -189,20 +174,16 @@ function matching(groups: MatcherGroup[], tool: string): CommandHook[] {
 	return selected.flatMap(({ hooks }) => hooks.filter(isCommand));
 }
 
-/** A matcher of only these characters is a tool name, or a list of names; anything else is a regex. */
+/** A matcher of only these characters is a name or a `|`/`,` list; anything else is a regex. */
 const NAME_LIST = /^[A-Za-z0-9_\- ,|]*$/;
 
-/**
- * Claude Code's matcher rules: `*` or empty matches every tool; a plain matcher is an exact name,
- * or names separated by `|` or `,`; anything else is an unanchored regex.
- */
+/** Claude Code's rules: `*` or empty is all, a plain matcher is exact names, else an unanchored regex. */
 function matches(matcher: string | undefined, name: string): boolean {
 	if (!matcher || matcher === '*') return true;
 	if (!NAME_LIST.test(matcher)) return new RegExp(matcher).test(name);
 	return toolNames(matcher).includes(name);
 }
 
-/** The tool names of a plain matcher, separated by `|` or `,`. */
 function toolNames(matcher: string): string[] {
 	const names = matcher.split(/[|,]/).map((part) => part.trim());
 	return names.filter((part) => part !== '');
@@ -225,22 +206,21 @@ function claudeInput(tool: string, input: Record<string, unknown>, sandbox: Sand
 	}
 }
 
-/**
- * A hook's `updatedInput`, in Claude's shape, back to the Flue tool's: the inverse of {@link claudeInput}.
- * Only the fields given are returned, so they are merged over the call's own input.
- */
+/** Claude `tool_input` field → Flue input field, per tool: the renames {@link claudeInput} makes. */
+const FLUE_FIELD: Record<string, Record<string, string>> = {
+	read: { file_path: 'path' },
+	write: { file_path: 'path' },
+	edit: { file_path: 'path', old_string: 'oldText', new_string: 'newText', replace_all: 'replaceAll' },
+};
+
+/** A hook's `updatedInput` (Claude shape) as Flue input fields, to merge over the call's own. */
 function flueInput(tool: string, updated: Record<string, unknown>): Record<string, unknown> {
-	const renames: Record<string, Record<string, string>> = {
-		read: { file_path: 'path' },
-		write: { file_path: 'path' },
-		edit: { file_path: 'path', old_string: 'oldText', new_string: 'newText', replace_all: 'replaceAll' },
-	};
-	const names = renames[tool] ?? {};
+	const names = FLUE_FIELD[tool] ?? {};
 	const input: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(updated)) {
 		input[names[key] ?? key] = value;
 	}
-	// Claude's Bash `timeout` is in milliseconds, Flue's in seconds.
+	// Claude's Bash `timeout` is in ms, Flue's in seconds.
 	if (tool === 'bash' && typeof input.timeout === 'number') input.timeout = input.timeout / 1000;
 	return input;
 }
@@ -275,7 +255,7 @@ async function runHook(
 		});
 		const durationMs = Math.round(performance.now() - started);
 		reportHookRun({ toolCallId: call.toolCallId, tool: call.tool, event, command: hook.command, exitCode, durationMs });
-		if (exitCode === 2) return event === 'PreToolUse' ? { block: stderr.trim() } : { feedback: stderr.trim() };
+		if (exitCode === 2) return event === 'PreToolUse' ? { block: stderr.trim() } : { context: stderr.trim() };
 		if (exitCode !== 0) {
 			warn(`[fluex] ${event} hook exited ${exitCode} (non-blocking): ${hook.command}\n${stderr.trim()}`);
 			return undefined;
@@ -286,16 +266,14 @@ async function runHook(
 	}
 }
 
-/** What one script asks of the call: block it, add context before it runs, or feed back after it ran. */
+/** What one script asks: block the call, append `context` to its result, or rewrite its input (Claude shape). */
 interface HookOutcome {
 	block?: string;
 	context?: string;
-	/** In Claude's `tool_input` shape. */
 	updatedInput?: Record<string, unknown>;
-	feedback?: string;
 }
 
-/** A script's exit-0 stdout JSON, as far as fluex reads it. */
+/** The exit-0 stdout JSON fields fluex reads. */
 interface HookOutput {
 	decision?: string;
 	reason?: string;
@@ -307,10 +285,6 @@ interface HookOutput {
 	};
 }
 
-/**
- * Exit-0 JSON output: `decision: "block"` and `hookSpecificOutput.permissionDecision: "deny"` block;
- * `hookSpecificOutput.additionalContext` is context (pre) or feedback (post); pre `updatedInput` rewrites the input.
- */
 function decision(event: HookEvent, stdout: string): HookOutcome | undefined {
 	const text = stdout.trim();
 	if (!text.startsWith('{')) return undefined;
@@ -324,11 +298,8 @@ function decision(event: HookEvent, stdout: string): HookOutcome | undefined {
 	if (event === 'PreToolUse') {
 		if (specific?.permissionDecision === 'deny') return { block: specific.permissionDecisionReason ?? 'denied by hook' };
 		if (out.decision === 'block') return { block: out.reason ?? 'blocked by hook' };
-		const outcome: HookOutcome = {};
-		if (specific?.additionalContext) outcome.context = specific.additionalContext;
-		if (specific?.updatedInput) outcome.updatedInput = specific.updatedInput;
-		return outcome;
+		return { context: specific?.additionalContext, updatedInput: specific?.updatedInput };
 	}
-	const feedback = [out.decision === 'block' ? out.reason : undefined, specific?.additionalContext].filter(Boolean).join('\n');
-	return feedback ? { feedback } : undefined;
+	const context = [out.decision === 'block' ? out.reason : undefined, specific?.additionalContext].filter(Boolean).join('\n');
+	return context ? { context } : undefined;
 }
