@@ -13,3 +13,4 @@ export {
 } from './interceptors.ts';
 export { type NameFilter, withSandboxTools, withSkills } from './filters.ts';
 export { ToolLog, type ToolLogOptions, toolLog } from './tool-log.ts';
+export { readStructuredResult, useStructuredResult } from './structured-result.ts';
