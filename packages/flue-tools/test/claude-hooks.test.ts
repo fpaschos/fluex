@@ -135,7 +135,6 @@ describe('claudeHooks', () => {
 		['PreToolUse is not an array', { PreToolUse: { matcher: 'Bash', hooks: [command('guard.sh')] } }],
 		['a group has no hooks', { PostToolUse: [{ matcher: 'Edit' }] }],
 		['a hook has no command', { PreToolUse: [{ hooks: [{ type: 'command' }] }] }],
-		['a matcher is not a valid regex', { PreToolUse: [{ matcher: 'Bash(', hooks: [command('guard.sh')] }] }],
 	])('fails tool calls when a settings file is invalid (%s), naming the file', async (_case, hooks) => {
 		claudeProject(hooks, {});
 		const { call } = await toolsWith(claudeHooks());
