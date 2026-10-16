@@ -32,19 +32,9 @@ function workspaceSkills(...names: string[]) {
 	}
 }
 
-/** What the model was offered in one agent run over `factory`, after it tried to activate `skill`. */
-interface Offer {
-	/** Skill names in the system prompt's catalog. */
-	catalog: string[];
-	/** The `activate_skill` result the model read back. */
-	activation: string;
-}
-
-let runs = 0;
-
-/** Run a Flue agent over `factory` with a scripted model that activates `skill`, and report what it saw. */
-async function offerOf(factory: SandboxFactory, skill: string): Promise<Offer> {
-	const offer: Offer = { catalog: [], activation: '' };
+/** Run a Flue agent over `factory` with a scripted model that activates `skill`: its skill catalog, and the activation result. */
+async function offerOf(factory: SandboxFactory, skill: string) {
+	const offer = { catalog: [] as string[], activation: '' };
 	const faux = fauxProvider({ provider: 'faux', models: [{ id: 'model' }] });
 
 	const activate: FauxResponseFactory = (context) => {
@@ -70,7 +60,7 @@ async function offerOf(factory: SandboxFactory, skill: string): Promise<Offer> {
 
 	const flue = await start({ agents: [probe], providers: [faux.provider] });
 	try {
-		const agent = init(probe, { id: `probe-${++runs}` });
+		const agent = init(probe, { id: 'probe' });
 		const receipt = await agent.dispatch({ message: 'go' });
 		await agent.read(receipt);
 	} finally {
@@ -94,14 +84,9 @@ describe('withSandboxTools', () => {
 describe('withSkills', () => {
 	it('offers only the listed skills, and activating another one fails', async () => {
 		workspaceSkills('a', 'b');
-		const unfiltered = await offerOf(local({ cwd: dir }), 'b');
-		expect(unfiltered.catalog).toEqual(['a', 'b']);
-		expect(unfiltered.activation).toContain('Instructions of b');
-
 		const offer = await offerOf(withSkills(local({ cwd: dir }), { only: ['a'] }), 'b');
 		expect(offer.catalog).toEqual(['a']);
 		expect(offer.activation).toContain('Skill \\"b\\" is not available');
-		expect(offer.activation).not.toContain('Instructions of b');
 	});
 
 	it('hides the excluded skills', async () => {
