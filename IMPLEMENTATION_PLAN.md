@@ -286,7 +286,7 @@ Changed against the plan:
 - A new sidecar `auto/target-app-flue` (`flue init --target node`, pnpm) instead of migrating `auto/target-app-project`, which keeps running automaton until retirement.
 - Skills come from target-app's `.agents/skills/` (Flue workspace discovery), not `useSkill(import …)`.
 - The result is reported through a terminating tool whose input is the Valibot schema; facts (cwd, branch, Java) come from the sandbox, not the model.
-- Added `@fluex/flue-tools` `useRequiredSkills(id, 'ast-grep')`: hooks only see tool names, so the skill name is checked through `observe()`.
+- Added `@fluex/flue-tools` `useRequiredSkills(id, 'ast-grep')`: hooks only see tool names, so the skill name is checked through `observe()`. Dropped later (hooks-api D10): the smoke result now reports `skills: [{ name, found, used }]` itself.
 
 ### Milestone 2 — golden issue (host)
 
@@ -455,11 +455,11 @@ Deferred during Milestones 1–2; each is small unless noted. Evidence: `auto/ta
 - Prompt: batch independent reads, edits and commands per turn — cached input scales with turns × context.
 - Acceptance check before commit: name the code and test per criterion; qualifiers ("successful", "only") need a test of the opposite case.
 - Read less up front: task-scoped docs (impl-65-2 read ~45 kB, incl. unrelated ADRs); target-app could give each doc a "read when" line. Larger: an exploration subagent returning a brief.
-- Role skill allowlist: Flue cannot filter workspace skills; a `withSkillFilter` sandbox wrapper hiding `.agents/skills/*` from discovery (unverified).
+- Role skill allowlist: Flue cannot filter workspace skills; `withSkills(factory, { only | exclude })` hides `.agents/skills/*` from discovery (exists in `@fluex/flue-tools`; not a security boundary).
 
 **Composition** ([composition.md](docs/research/composition.md))
 
-- `useResult` (result tool + `useDataWriter` + run record), `fillTemplate`, `useCodingRole`.
+- `useResult` (result tool + `useDataWriter` + run record), `fillTemplate`. Roles compose in the agent body (no `useCodingRole`; [hooks-api.md](docs/research/hooks-api.md) D3).
 - Planner agent and `scripts/cycle.ts` (plan → implement → verify); issue label check (`agent-ready`, not `agent-complete`, not PRD/HITL) before implementing.
 
 **Observability** ([observability.md](docs/research/observability.md), [run-cli.md](docs/research/run-cli.md))

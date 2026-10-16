@@ -1,4 +1,3 @@
-export { SkillActivations, useRequiredSkills } from './skills.ts';
 export { type ClaudeHooksOptions, claudeHooks } from './claude-hooks.ts';
 export {
 	blocked,

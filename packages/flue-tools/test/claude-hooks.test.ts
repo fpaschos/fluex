@@ -312,7 +312,6 @@ describe('claudeHooks seen by toolLog', () => {
 			'[impl-1] #1    use fd',
 			'[impl-1] #1    not find',
 			expect.stringMatching(/^\[impl-1\] #1 bash\(find \.\) ✗ exit \? · 0\.1s · \d+B · blocked$/),
-			expect.stringMatching(/^\[impl-1\] #2 hook PostToolUse lint\.sh ✗ exit 2 · \d+\.\ds$/),
 			'[impl-1] #2 hook PostToolUse lint.sh feedback edit (exit 2):',
 			'[impl-1] #2    TODO left',
 			'[impl-1] #2 edit(A.kt, +1 -1) ✓ 0.1s',

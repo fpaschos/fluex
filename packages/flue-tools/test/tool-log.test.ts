@@ -136,7 +136,7 @@ describe('ToolLog', () => {
 		expect(lines).toEqual(['[impl-1] #1 bash(ls) ✓ exit 0 · 1.5s · 5B']);
 	});
 
-	it('logs every hook script run on its call, and counts them when settled', () => {
+	it('prints a hook script only when it fails, and records and counts every run', () => {
 		const { log, lines, events } = setup();
 		const lint = '${CLAUDE_PROJECT_DIR}/.claude/hooks/kotlin-lint.sh';
 		const lintRun = { event: 'PostToolUse', command: lint, exitCode: 0, durationMs: 312 };
@@ -147,7 +147,6 @@ describe('ToolLog', () => {
 		log.record(end('b', 'bash', text('a.txt', 0, { hookRuns: [guardRun] })));
 		log.record(ev({ type: 'submission_settled', outcome: 'completed' }));
 		expect(lines).toEqual([
-			'[impl-1] #1 hook PostToolUse kotlin-lint.sh ✓ exit 0 · 0.3s',
 			'[impl-1] #1 edit(A.kt, +1 -1) ✓ 1.5s',
 			'[impl-1] #2 hook PreToolUse guard.sh ✗ exit 1 · 0.0s',
 			'[impl-1] #2 bash(ls) ✓ exit 0 · 1.5s · 5B',

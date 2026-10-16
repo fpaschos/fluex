@@ -45,7 +45,7 @@ interface Note {
 
 /**
  * Automaton-style tool log: one line per tool call (`bash(cmd)`, `edit(path, +N -M)`, …),
- * bash exit/duration/size, skill activations, every hook script run, blocks and context
+ * bash exit/duration/size, skill activations, failing hook scripts, blocks and context
  * from interceptors, and a summary when the submission settles. Everything is read from Flue
  * observations: blocks from a `tool` observation's `errorInfo`, context and hook script runs
  * from `result.details.fluex`. Lines go to {@link ToolLogOptions.write}; the same activity goes
@@ -88,13 +88,14 @@ export class ToolLog {
 				if (event.isError) run.errors++;
 				// What happened during the call goes before its line, in the order it happened.
 				const fluex = (event.result as { details?: { fluex?: FluexDetails } } | undefined)?.details?.fluex ?? {};
-				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun);
 				const isBlocked = event.errorInfo?.code === TOOL_BLOCKED;
 				if (isBlocked) run.blocked++;
 				const blocks = isBlocked ? notesIn(event.errorInfo?.message ?? output, 'blocked') : [];
 				const contextNotes = (text: string) => notesIn(text, 'context');
 				const contexts = (fluex.context ?? []).flatMap(contextNotes);
-				for (const note of [...blocks, ...contexts]) this.note(id, call, event.toolCallId, ts, note);
+				const notes = [...blocks, ...contexts];
+				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun, notes);
+				for (const note of notes) this.note(id, call, event.toolCallId, ts, note);
 				// One line per call, when it ends: `flue run` already prints a line when it starts.
 				const ended = outcome(call, event.isError, isBlocked, exitCode, event.durationMs, output);
 				this.line(id, call.n, describe(call), ` ${ended}`);
@@ -159,12 +160,19 @@ export class ToolLog {
 		});
 	}
 
-	/** One line per hook script, on the call it ran for: `hook PostToolUse kotlin-lint.sh ✓ exit 0 · 0.3s`. */
-	private hookRun(id: string, call: Call, toolCallId: string, ts: string, hookRun: HookRun): void {
+	/**
+	 * Every hook script run goes to events.jsonl and the settle count. The console shows one only when
+	 * it failed and no catch note names it (a block or output already shows there):
+	 * `hook PreToolUse guard.sh ✗ exit 1 · 0.0s`. A silent pass prints nothing.
+	 */
+	private hookRun(id: string, call: Call, toolCallId: string, ts: string, hookRun: HookRun, notes: Note[]): void {
 		this.instance(id).hooks++;
-		const script = hookRun.command.split('/').at(-1) ?? hookRun.command;
-		const seconds = (hookRun.durationMs / 1000).toFixed(1);
-		this.line(id, call.n, `hook ${hookRun.event} ${script} ${hookRun.exitCode === 0 ? '✓' : '✗'} exit ${hookRun.exitCode} · ${seconds}s`);
+		const isCaught = notes.some((note) => note.hook?.command === hookRun.command && note.hook.event === hookRun.event);
+		if (hookRun.exitCode !== 0 && !isCaught) {
+			const script = hookRun.command.split('/').at(-1) ?? hookRun.command;
+			const seconds = (hookRun.durationMs / 1000).toFixed(1);
+			this.line(id, call.n, `hook ${hookRun.event} ${script} ✗ exit ${hookRun.exitCode} · ${seconds}s`);
+		}
 		this.event(id, {
 			ts,
 			type: 'hook_run',
