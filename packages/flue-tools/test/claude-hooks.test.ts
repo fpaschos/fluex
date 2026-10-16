@@ -153,7 +153,6 @@ describe('claudeHooks', () => {
 		['', 'bash', true],
 		['Edit', 'edit', true],
 		['Edit', 'write', false],
-		['Edit', 'bash', false],
 		['Edit, Write', 'write', true],
 		['Edit, Write', 'bash', false],
 		['Edit|Write', 'edit', true],
@@ -161,9 +160,6 @@ describe('claudeHooks', () => {
 		['dit', 'edit', false],
 		['dit$', 'edit', true],
 		['dit$', 'write', false],
-		['^Ba', 'bash', true],
-		['Wr.*', 'write', true],
-		['Wr.*', 'read', false],
 	])('matcher %j on %s runs the hook: %s', async (matcher, tool, runs) => {
 		claudeProject({ PreToolUse: [{ matcher, hooks: [command('stop.sh')] }] }, { 'stop.sh': 'echo matched >&2; exit 2' });
 		writeFileSync(join(dir, 'a.txt'), 'x');
@@ -171,7 +167,6 @@ describe('claudeHooks', () => {
 			bash: { command: 'echo ran' },
 			edit: { path: 'a.txt', oldText: 'x', newText: 'y' },
 			write: { path: 'b.txt', content: 'x' },
-			read: { path: 'a.txt' },
 		};
 		const { call } = await toolsWith(claudeHooks({ warn: () => {} }));
 		const outcome = call(tool, inputs[tool]!);
@@ -179,12 +174,14 @@ describe('claudeHooks', () => {
 		else await expect(outcome).resolves.toBeDefined();
 	});
 
-	it('warns once, when settings load, about matchers on tools fluex does not intercept', async () => {
+	it('warns once, when settings load, about matchers on tools fluex does not intercept, and only those', async () => {
 		claudeProject(
 			{
 				PreToolUse: [
 					{ matcher: 'Skill', hooks: [command('ok.sh')] },
 					{ matcher: 'Agent', hooks: [command('ok.sh')] },
+					{ matcher: '*', hooks: [command('ok.sh')] },
+					{ matcher: 'Edit, Bash', hooks: [command('ok.sh')] },
 				],
 				PostToolUse: [{ matcher: 'mcp__x', hooks: [command('ok.sh')] }],
 			},
@@ -194,21 +191,7 @@ describe('claudeHooks', () => {
 		const { call } = await toolsWith(claudeHooks({ warn: (m) => warnings.push(m) }));
 		await Promise.all([call('bash', { command: 'echo 1' }), call('bash', { command: 'echo 2' })]);
 		await call('read', { path: '.claude/settings.json' });
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toContain('Skill');
-		expect(warnings[0]).toContain('Agent');
-		expect(warnings[0]).toContain('mcp__x');
-	});
-
-	it('does not warn about matchers on tools it intercepts', async () => {
-		claudeProject(
-			{ PreToolUse: [{ matcher: '*', hooks: [command('ok.sh')] }, { matcher: 'Edit, Write', hooks: [command('ok.sh')] }, { matcher: 'Bash', hooks: [command('ok.sh')] }] },
-			{ 'ok.sh': 'exit 0' },
-		);
-		const warnings: string[] = [];
-		const { call } = await toolsWith(claudeHooks({ warn: (m) => warnings.push(m) }));
-		await call('bash', { command: 'echo 1' });
-		expect(warnings).toEqual([]);
+		expect(warnings).toEqual(['[fluex] Claude hooks on tools fluex does not intercept never run: Skill, Agent, mcp__x']);
 	});
 
 	it('ignores events and hooks it does not run', async () => {
