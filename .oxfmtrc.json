@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "bracketSameLine": true,
+  "singleQuote": true,
+  "arrowParens": "avoid",
+  "trailingComma": "none",
+  "sortImports": {
+    "newlinesBetween": false,
+    "customGroups": [
+      {
+        "groupName": "flue",
+        "elementNamePattern": ["@flue/**"]
+      },
+      {
+        "groupName": "fluex",
+        "elementNamePattern": ["@fluex/**"]
+      }
+    ],
+    "groups": [
+      "builtin",
+      ["external", "internal", "subpath", "unknown"],
+      "flue",
+      "fluex",
+      ["parent", "sibling", "index"]
+    ]
+  },
+  "ignorePatterns": ["packs/**", "**/*.md"]
+}

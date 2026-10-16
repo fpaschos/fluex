@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: false
+  commands:
+    format:
+      glob: '*.{ts,json,yaml,yml}'
+      run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+    lint:
+      glob: '*.ts'
+      run: pnpm exec oxlint --max-warnings=0 --fix {staged_files}
+      stage_fixed: true

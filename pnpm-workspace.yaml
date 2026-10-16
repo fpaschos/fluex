@@ -1,9 +1,34 @@
 packages:
   - packages/*
+
+# Supply-chain guards.
+# Install only versions published at least a day ago: most malicious releases are pulled within hours.
+minimumReleaseAge: 1440
+# Fail instead of silently falling back to an older version.
+minimumReleaseAgeStrict: true
+# Warn when node_modules is out of sync with the lockfile before `pnpm run`.
+verifyDepsBeforeRun: warn
+# Fail when a version is published with less trust (e.g. no provenance) than earlier ones: a sign of a takeover.
+trustPolicy: no-downgrade
+# Skip that check for versions older than a year.
+trustPolicyIgnoreAfter: 525600
+# Publishes without provenance, checked 2026-10-17: Flue now releases by hand; detect-agent moved to OIDC.
+# TODO: re-check and replace these on every upgrade; drop once they publish with provenance again.
+# lefthook stays on 2.2.1 (2.2.2 was a manual publish after a failed CI release); upgrade once a release has provenance.
+trustPolicyExclude:
+  - '@flue/cli@2.3.0'
+  - '@flue/runtime@2.3.0'
+  - '@flue/vite@2.3.0'
+  - '@vercel/detect-agent@1.2.6'
+# Only direct dependencies may come from git or tarball URLs.
+blockExoticSubdeps: true
+
 allowBuilds:
   '@google/genai': false
   core-js-pure: false
   esbuild: false
+  # Hooks are installed by the `prepare` script, not on every install.
+  lefthook: false
   protobufjs: false
 catalog:
   '@earendil-works/pi-ai': 1.2.0
