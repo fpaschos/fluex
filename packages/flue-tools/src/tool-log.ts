@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { type FlueObservation, observe, type PromptUsage } from '@flue/runtime';
-import { type HookReport, type HookRun, onHookReport, onHookRun } from './hook-reports.ts';
+import type { FlueObservation, FlueObservationSubscriber, PromptUsage } from '@flue/runtime';
+import { type FluexDetails, type HookRun, TOOL_BLOCKED } from './interceptors.ts';
 
 export interface ToolLogOptions {
 	/** Directory for `<runsDir>/<instanceId>/events.jsonl`; `false` disables the file. Default `runs`. */
@@ -32,16 +32,25 @@ interface Instance {
 const MAX_LINE = 200;
 const MAX_FIELD = 2000;
 
+/** A block or a context text, shown on the call it belongs to. */
+interface Note {
+	type: 'hook' | 'blocked' | 'context';
+	label: string;
+	text: string;
+	/** For a `claudeHooks` note: the Claude event and what the hook did. */
+	hook?: { event: string; outcome: string };
+}
+
 /**
  * Automaton-style tool log: one line per tool call (`bash(cmd)`, `edit(path, +N -M)`, …),
- * bash exit/duration/size, skill activations, every hook script run, hook blocks and feedback,
- * and a summary when
- * the submission settles. Lines go to {@link ToolLogOptions.write}; the same activity goes
+ * bash exit/duration/size, skill activations, every hook script run, blocks and context
+ * from interceptors, and a summary when the submission settles. Everything is read from Flue
+ * observations: blocks from a `tool` observation's `errorInfo`, context and hook script runs
+ * from `result.details.fluex`. Lines go to {@link ToolLogOptions.write}; the same activity goes
  * to `runs/<instanceId>/events.jsonl` with stable, fluex-owned field names.
  */
 export class ToolLog {
 	private readonly instances = new Map<string, Instance>();
-	private readonly instanceOfCall = new Map<string, string>();
 	private readonly instanceOfSubmission = new Map<string, string>();
 	private readonly runsDir: string | false;
 	private readonly write: (line: string) => void;
@@ -63,7 +72,6 @@ export class ToolLog {
 				if (!event.toolCallId) return;
 				const call: Call = { n: ++run.next, tool: event.toolName, args: (event.args ?? {}) as Record<string, unknown> };
 				run.calls.set(event.toolCallId, call);
-				this.instanceOfCall.set(event.toolCallId, id);
 				this.event(id, { ts, type: 'tool_start', n: call.n, toolCallId: event.toolCallId, tool: call.tool, args: clip(call.args) });
 				return;
 			}
@@ -71,12 +79,19 @@ export class ToolLog {
 				const call = event.toolCallId ? run.calls.get(event.toolCallId) : undefined;
 				if (!call || !event.toolCallId) return;
 				run.calls.delete(event.toolCallId);
-				this.instanceOfCall.delete(event.toolCallId);
 				run.tools++;
 				const output = resultText(event.result);
 				const exitCode = exitCodeOf(event.result);
 				const failed = event.isError || (exitCode !== undefined && exitCode !== 0);
 				if (event.isError) run.errors++;
+				// What happened during the call goes before its line, in the order it happened.
+				const fluex = fluexOf(event.result);
+				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun);
+				const isBlocked = event.errorInfo?.code === TOOL_BLOCKED;
+				if (isBlocked) run.blocked++;
+				const blockNotes = isBlocked ? [blockNote(event.errorInfo?.message ?? output)] : [];
+				const contextNotes = (fluex.context ?? []).map(contextNote);
+				for (const note of [...blockNotes, ...contextNotes]) this.note(id, call, event.toolCallId, ts, note);
 				// One line per call, when it ends: `flue run` already prints a line when it starts.
 				this.line(id, call.n, describe(call), ` ${outcome(call, event.isError, exitCode, event.durationMs, output)}`);
 				this.event(id, {
@@ -120,28 +135,36 @@ export class ToolLog {
 		}
 	}
 
-	hook(report: HookReport): void {
-		const id = this.instanceOfCall.get(report.toolCallId);
-		if (id === undefined) return;
-		const run = this.instance(id);
-		const n = run.calls.get(report.toolCallId)?.n;
-		if (report.outcome === 'blocked') run.blocked++;
-		const [first = '', ...rest] = report.text.trim().split('\n');
+	/** One line per block or context text, on its call: `hook PostToolUse feedback edit: <first line> (+2 lines)`. */
+	private note(id: string, call: Call, toolCallId: string, ts: string, note: Note): void {
+		const [first = '', ...rest] = note.text.trim().split('\n');
 		const more = rest.length > 0 ? ` (+${rest.length} lines)` : '';
-		this.line(id, n, `hook ${report.event} ${report.outcome === 'blocked' ? 'BLOCKED' : 'feedback'} ${report.tool}: ${first}${more}`);
-		this.event(id, { ts: new Date().toISOString(), type: 'hook', n, toolCallId: report.toolCallId, tool: report.tool, event: report.event, outcome: report.outcome, text: tail(report.text) });
+		this.line(id, call.n, `${note.label} ${call.tool}: ${first}${more}`);
+		this.event(id, {
+			ts,
+			type: note.type,
+			n: call.n,
+			toolCallId,
+			tool: call.tool,
+			...note.hook,
+			text: tail(note.text),
+		});
 	}
 
 	/** One line per hook script, on the call it ran for: `hook PostToolUse kotlin-lint.sh ✓ exit 0 · 0.3s`. */
-	hookRun(report: HookRun): void {
-		const id = this.instanceOfCall.get(report.toolCallId);
-		if (id === undefined) return;
-		const run = this.instance(id);
-		const n = run.calls.get(report.toolCallId)?.n;
-		run.hooks++;
-		const script = report.command.split('/').at(-1) ?? report.command;
-		this.line(id, n, `hook ${report.event} ${script} ${report.exitCode === 0 ? '✓' : '✗'} exit ${report.exitCode} · ${(report.durationMs / 1000).toFixed(1)}s`);
-		this.event(id, { ts: new Date().toISOString(), type: 'hook_run', n, toolCallId: report.toolCallId, tool: report.tool, event: report.event, command: report.command, exitCode: report.exitCode, durationMs: report.durationMs });
+	private hookRun(id: string, call: Call, toolCallId: string, ts: string, hookRun: HookRun): void {
+		this.instance(id).hooks++;
+		const script = hookRun.command.split('/').at(-1) ?? hookRun.command;
+		const seconds = (hookRun.durationMs / 1000).toFixed(1);
+		this.line(id, call.n, `hook ${hookRun.event} ${script} ${hookRun.exitCode === 0 ? '✓' : '✗'} exit ${hookRun.exitCode} · ${seconds}s`);
+		this.event(id, {
+			ts,
+			type: 'hook_run',
+			n: call.n,
+			toolCallId,
+			tool: call.tool,
+			...hookRun,
+		});
 	}
 
 	private instance(id: string): Instance {
@@ -251,17 +274,48 @@ function clip(args: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(Object.entries(args).map(([key, v]) => [key, typeof v === 'string' && v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…` : v]));
 }
 
-let installed = false;
+/** What fluex interceptors recorded on a tool result. */
+function fluexOf(result: unknown): FluexDetails {
+	const details = (result as { details?: { fluex?: FluexDetails } } | undefined)?.details;
+	return details?.fluex ?? {};
+}
+
+/** The block message `claudeHooks` throws: `Blocked by PreToolUse hook:\n<scripts' reasons>`. */
+const HOOK_BLOCK = /^Blocked by (PreToolUse) hook:\n/;
+/** The context texts `claudeHooks` appends: `PreToolUse hook context:\n…`, `PostToolUse hook feedback:\n…`. */
+const HOOK_CONTEXT = /^(PreToolUse|PostToolUse) hook (context|feedback):\n/;
+
+function blockNote(message: string): Note {
+	const hook = HOOK_BLOCK.exec(message);
+	if (!hook) return { type: 'blocked', label: 'BLOCKED', text: message };
+	const event = hook[1]!;
+	return {
+		type: 'hook',
+		label: `hook ${event} BLOCKED`,
+		text: message.slice(hook[0].length),
+		hook: { event, outcome: 'blocked' },
+	};
+}
+
+function contextNote(text: string): Note {
+	const hook = HOOK_CONTEXT.exec(text);
+	if (!hook) return { type: 'context', label: 'context', text };
+	const event = hook[1]!;
+	const outcome = hook[2]!;
+	return {
+		type: 'hook',
+		label: `hook ${event} ${outcome}`,
+		text: text.slice(hook[0].length),
+		hook: { event, outcome },
+	};
+}
 
 /**
- * Register the process-wide tool log once. Call at agent-module top level (`flue run` never
- * loads `app.ts`); later calls are no-ops.
+ * The tool log as a Flue `observe()` subscriber. Mount it once, in a module every agent file
+ * imports (ES modules evaluate once): `observe(toolLog({ runsDir: 'runs' }))`.
  */
-export function logToolCalls(options: ToolLogOptions = {}): void {
-	if (installed) return;
-	installed = true;
+export function toolLog(options: ToolLogOptions = {}): FlueObservationSubscriber {
 	const log = new ToolLog(options);
-	observe((event) => log.record(event));
-	onHookReport((report) => log.hook(report));
-	onHookRun((report) => log.hookRun(report));
+	const subscriber: FlueObservationSubscriber = (event) => log.record(event);
+	return subscriber;
 }

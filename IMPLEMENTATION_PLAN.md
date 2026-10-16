@@ -310,7 +310,7 @@ Changed against the plan:
 Pulled forward:
 
 - **Tool hooks, Claude-compatible** (`withInterceptors`, `claudeHooks` in `@fluex/flue-tools`): target-app's `.claude/settings.json` hooks run unchanged on every sandbox tool call (`find`/`jar`/`javap` blocked, ast-grep lint after each `.kt` edit), through Flue's documented `SandboxFactory.tools` slot.
-- **Tool log and run folder** (`logToolCalls`): automaton-style lines (`bash(cmd) ✓ exit 0 · 0.1s`, `edit(path, +1 -0)`, `skill(ast-grep) ✓`, hook blocks/feedback, a cost summary) and `runs/<id>/events.jsonl` — observability.md step 1.
+- **Tool log and run folder** (`observe(toolLog())`): automaton-style lines (`bash(cmd) ✓ exit 0 · 0.1s`, `edit(path, +1 -0)`, `skill(ast-grep) ✓`, hook blocks/feedback, a cost summary) and `runs/<id>/events.jsonl` — observability.md step 1.
 - **target-app test logging** (target-app `chore/test-logging-failures-only`): failures only on the console by default (`-PtestLog=verbose` for the old log); with `-w --console=plain`, a single-class test run dropped from 15 kB to under 4 kB of agent context.
 
 ### Milestone 3 — `flue-docker` package
