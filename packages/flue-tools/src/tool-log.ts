@@ -91,7 +91,8 @@ export class ToolLog {
 				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun);
 				const isBlocked = event.errorInfo?.code === TOOL_BLOCKED;
 				if (isBlocked) run.blocked++;
-				const blocks = isBlocked ? blockNotes(event.errorInfo?.message ?? output) : [];
+				const blocks = isBlocked ? notesIn(event.errorInfo?.message ?? output, 'blocked') : [];
+				const contextNotes = (text: string) => notesIn(text, 'context');
 				const contexts = (fluex.context ?? []).flatMap(contextNotes);
 				for (const note of [...blocks, ...contexts]) this.note(id, call, event.toolCallId, ts, note);
 				// One line per call, when it ends: `flue run` already prints a line when it starts.
@@ -296,22 +297,23 @@ function hookNotes(text: string): Note[] {
 			type: 'hook',
 			label: `hook ${event} ${script} ${outcome === 'blocked' ? 'BLOCKED' : outcome}`,
 			text: text.slice(start, end).trim(),
-			hook: { event: event!, outcome: outcome!, command: command!, exitCode: Number(exitCode) },
+			hook: {
+				event: event!,
+				outcome: outcome!,
+				command: command!,
+				exitCode: Number(exitCode),
+			},
 		};
 	};
 	return headers.map(noteAt);
 }
 
-function blockNotes(message: string): Note[] {
-	const notes = hookNotes(message);
-	if (notes.length > 0) return notes;
-	return [{ type: 'blocked', label: 'BLOCKED', text: message }];
-}
-
-function contextNotes(text: string): Note[] {
+/** The `claudeHooks` catches in `text`, or `text` as one note when another interceptor wrote it. */
+function notesIn(text: string, type: 'blocked' | 'context'): Note[] {
 	const notes = hookNotes(text);
 	if (notes.length > 0) return notes;
-	return [{ type: 'context', label: 'context', text }];
+	const label = type === 'blocked' ? 'BLOCKED' : 'context';
+	return [{ type, label, text }];
 }
 
 /**

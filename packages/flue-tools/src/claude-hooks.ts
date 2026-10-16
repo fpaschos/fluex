@@ -123,10 +123,7 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 	};
 }
 
-/**
- * One script's catch as the model and observers read it, named as Claude Code names it:
- * `PreToolUse:Bash hook blocked [<command>] (exit 2):\n<what it printed>`. `ToolLog` parses this header.
- */
+/** One script's catch, headed as Claude Code names hooks: `PreToolUse:Bash hook blocked [<command>] (exit 2):`; `ToolLog` parses it. */
 function caught(kind: 'blocked' | 'context' | 'feedback', tool: string, { hookRun }: ScriptRun, text: string): string {
 	const { event, command, exitCode } = hookRun;
 	return `${event}:${CLAUDE_TOOL[tool]} hook ${kind} [${command}] (exit ${exitCode}):\n${text}`;
