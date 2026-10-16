@@ -35,7 +35,6 @@ title, branch, prd? }] }` that `run.ts` feeds to the implementer.
 |---|---|---|
 | `useResult(name, schema, { facts? })` | `flue-tools` | Terminating report tool: model fills `schema`; host adds `facts(harness)` (commits by trailer, branch); written with `useDataWriter(name)` so `read()` returns it in `reply.data[name]`, and to the run record |
 | `fillTemplate(md, vars)` | `flue-tools` | `{{KEY}}` substitution; throws on a missing or unused key |
-| `useRequiredSkills` | `flue-tools` | exists |
 | `step(Agent, { id, data, message })` | `runner` | `init` → `dispatch` → `read` under one `start()`; returns `{ result, reply, record }`; throws `AgentRunError` on failed/aborted |
 | `verify(repo, checks)` | `runner` | Host-side commands (`execFile`, argv arrays), sequential, fail-fast; outcome on the record |
 
@@ -43,6 +42,20 @@ title, branch, prd? }] }` that `run.ts` feeds to the implementer.
 optional Valibot `schema`). It replaces writing `runs/*.json` from inside a tool.
 
 ### 2. Roles as custom hooks
+
+> **Superseded** by composing in the agent body ([hooks-api.md](hooks-api.md) §9, D3): fluex ships values
+> (`withInterceptors`, `withSandboxTools`, `withSkills`, interceptors) and the agent body mounts them as a flat
+> list of `use*` calls. There is no `useCodingRole` config object; a shared fragment becomes a small custom
+> hook that does one thing. Kept below as the original proposal.
+>
+> ```ts
+> export function Planner() {
+> 	useModel('anthropic/claude-sonnet-4-6', { thinkingLevel: 'low' });
+> 	useSandbox(withInterceptors(withSandboxTools(targetApp(key), { exclude: ['write', 'edit'] }), ...guards));
+> 	useStructuredResult('plan', PlanSchema);
+> 	return planPrompt;
+> }
+> ```
 
 Flue's reuse unit is the custom hook. A role hook bundles model, sandbox, instructions, prompt,
 and result; the sidecar keeps only config:
@@ -70,8 +83,8 @@ stay identical to production.
 ## Order
 
 1. `useResult` + `fillTemplate` in `flue-tools`; port `Smoke` to them (no behaviour change).
-2. `useCodingRole` in the sidecar (promote to fluex once a second sidecar needs it); mock `glab` + one ticket.
-3. `Planner` + `Implementer` on the role hook; `step` + `verify` in `@fluex/runner`; `scripts/cycle.ts`.
+2. Mock `glab` + one ticket (`useCodingRole` dropped: agents compose in their body, §2).
+3. `Planner` + `Implementer` composed in their bodies; `step` + `verify` in `@fluex/runner`; `scripts/cycle.ts`.
 4. Run on target-app's current branch (throwaway branch, reverted after).
 
 ## Open
