@@ -31,14 +31,16 @@ interface Instance {
 
 const MAX_LINE = 200;
 const MAX_FIELD = 2000;
+const MAX_NOTE_LINES = 20;
 
 /** A block or a context text, shown on the call it belongs to. */
 interface Note {
 	type: 'hook' | 'blocked' | 'context';
+	/** What the header shows before the tool: `hook PreToolUse guard.sh BLOCKED`, `context`. */
 	label: string;
 	text: string;
-	/** For a `claudeHooks` note: the Claude event and what the hook did. */
-	hook?: { event: string; outcome: string };
+	/** For a `claudeHooks` catch: the script and what it did. */
+	hook?: { event: string; outcome: string; command: string; exitCode: number };
 }
 
 /**
@@ -89,10 +91,12 @@ export class ToolLog {
 				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun);
 				const isBlocked = event.errorInfo?.code === TOOL_BLOCKED;
 				if (isBlocked) run.blocked++;
-				if (isBlocked) this.note(id, call, event.toolCallId, ts, blockNote(event.errorInfo?.message ?? output));
-				for (const text of fluex.context ?? []) this.note(id, call, event.toolCallId, ts, contextNote(text));
+				const blocks = isBlocked ? blockNotes(event.errorInfo?.message ?? output) : [];
+				const contexts = (fluex.context ?? []).flatMap(contextNotes);
+				for (const note of [...blocks, ...contexts]) this.note(id, call, event.toolCallId, ts, note);
 				// One line per call, when it ends: `flue run` already prints a line when it starts.
-				this.line(id, call.n, describe(call), ` ${outcome(call, event.isError, exitCode, event.durationMs, output)}`);
+				const ended = outcome(call, event.isError, isBlocked, exitCode, event.durationMs, output);
+				this.line(id, call.n, describe(call), ` ${ended}`);
 				this.event(id, {
 					ts,
 					type: 'tool',
@@ -134,11 +138,15 @@ export class ToolLog {
 		}
 	}
 
-	/** One line per block or context text, on its call: `hook PostToolUse feedback edit: <first line> (+2 lines)`. */
+	/** A header on its call, `hook PostToolUse lint.sh feedback edit (exit 2):`, then the text, one indented line each. */
 	private note(id: string, call: Call, toolCallId: string, ts: string, note: Note): void {
-		const [first = '', ...rest] = note.text.trim().split('\n');
-		const more = rest.length > 0 ? ` (+${rest.length} lines)` : '';
-		this.line(id, call.n, `${note.label} ${call.tool}: ${first}${more}`);
+		const exit = note.hook ? ` (exit ${note.hook.exitCode})` : '';
+		this.line(id, call.n, `${note.label} ${call.tool}${exit}:`);
+		const text = note.text.trim();
+		const body = text === '' ? [] : text.split('\n');
+		const shown = body.slice(0, MAX_NOTE_LINES);
+		for (const bodyLine of shown) this.line(id, call.n, `   ${bodyLine}`);
+		if (body.length > shown.length) this.line(id, call.n, `   … +${body.length - shown.length} lines`);
 		this.event(id, {
 			ts,
 			type: note.type,
@@ -217,14 +225,14 @@ function describe({ tool, args }: Call): string {
 	}
 }
 
-/** How it ended: `✓ 0.1s`; bash adds exit code and output size; failures add the first error line. */
-function outcome(call: Call, isError: boolean, exitCode: number | undefined, durationMs: number, output: string): string {
+/** How it ended: `✓ 0.1s`; bash adds exit code and output size; failures add the first error line, or `blocked`. */
+function outcome(call: Call, isError: boolean, blocked: boolean, exitCode: number | undefined, durationMs: number, output: string): string {
 	const failed = isError || (exitCode !== undefined && exitCode !== 0);
 	const parts = [failed ? '✗' : '✓'];
 	if (call.tool === 'bash') parts.push(`exit ${exitCode ?? (isError ? '?' : 0)} ·`);
 	parts.push(`${(durationMs / 1000).toFixed(1)}s`);
 	if (call.tool === 'bash') parts.push(`· ${size(Buffer.byteLength(output))}`);
-	if (isError) parts.push(`· ${output.trim().split('\n')[0] ?? ''}`);
+	if (isError) parts.push(`· ${blocked ? 'blocked' : (output.trim().split('\n')[0] ?? '')}`);
 	return parts.join(' ');
 }
 
@@ -273,34 +281,37 @@ function clip(args: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(Object.entries(args).map(([key, v]) => [key, typeof v === 'string' && v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…` : v]));
 }
 
-/** The block message `claudeHooks` throws: `Blocked by PreToolUse hook:\n<scripts' reasons>`. */
-const HOOK_BLOCK = /^Blocked by (PreToolUse) hook:\n/;
-/** The context texts `claudeHooks` appends: `PreToolUse hook context:\n…`, `PostToolUse hook feedback:\n…`. */
-const HOOK_CONTEXT = /^(PreToolUse|PostToolUse) hook (context|feedback):\n/;
+/** The header `claudeHooks` puts on each script's catch: `PreToolUse:Bash hook blocked [<command>] (exit 2):`. */
+const HOOK_CATCH = /^(PreToolUse|PostToolUse):\S+ hook (blocked|context|feedback) \[(.*)\] \(exit (-?\d+)\):$/gm;
 
-function blockNote(message: string): Note {
-	const hook = HOOK_BLOCK.exec(message);
-	if (!hook) return { type: 'blocked', label: 'BLOCKED', text: message };
-	const event = hook[1]!;
-	return {
-		type: 'hook',
-		label: `hook ${event} BLOCKED`,
-		text: message.slice(hook[0].length),
-		hook: { event, outcome: 'blocked' },
+/** The `claudeHooks` catches in `text`, each from its header to the next; none in another interceptor's text. */
+function hookNotes(text: string): Note[] {
+	const headers = [...text.matchAll(HOOK_CATCH)];
+	const noteAt = (header: RegExpExecArray, i: number): Note => {
+		const [line, event, outcome, command, exitCode] = header as unknown as string[];
+		const start = header.index + line!.length;
+		const end = headers[i + 1]?.index ?? text.length;
+		const script = command!.split('/').at(-1);
+		return {
+			type: 'hook',
+			label: `hook ${event} ${script} ${outcome === 'blocked' ? 'BLOCKED' : outcome}`,
+			text: text.slice(start, end).trim(),
+			hook: { event: event!, outcome: outcome!, command: command!, exitCode: Number(exitCode) },
+		};
 	};
+	return headers.map(noteAt);
 }
 
-function contextNote(text: string): Note {
-	const hook = HOOK_CONTEXT.exec(text);
-	if (!hook) return { type: 'context', label: 'context', text };
-	const event = hook[1]!;
-	const outcome = hook[2]!;
-	return {
-		type: 'hook',
-		label: `hook ${event} ${outcome}`,
-		text: text.slice(hook[0].length),
-		hook: { event, outcome },
-	};
+function blockNotes(message: string): Note[] {
+	const notes = hookNotes(message);
+	if (notes.length > 0) return notes;
+	return [{ type: 'blocked', label: 'BLOCKED', text: message }];
+}
+
+function contextNotes(text: string): Note[] {
+	const notes = hookNotes(text);
+	if (notes.length > 0) return notes;
+	return [{ type: 'context', label: 'context', text }];
 }
 
 /**

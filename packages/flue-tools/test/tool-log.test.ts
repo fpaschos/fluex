@@ -60,22 +60,49 @@ describe('ToolLog', () => {
 		expect(lines[0]).toMatch(/^\[impl-1\] #1 bash\(glab issue list .*x… ✓ exit 0 · 0\.8s · 2B$/);
 	});
 
-	it('shows hook blocks and feedback on the call they belong to', () => {
+	it('shows each hook catch with its script, exit code and full output, on its call', () => {
 		const { log, lines, events } = setup();
+		const guard = '${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh';
+		const policy = '${CLAUDE_PROJECT_DIR}/.claude/hooks/policy.sh';
+		const lint = '${CLAUDE_PROJECT_DIR}/.claude/hooks/kotlin-lint.sh';
+		const block = [
+			`PreToolUse:Bash hook blocked [${guard}] (exit 2):\nBlocked: use 'fd' instead of 'find'`,
+			`PreToolUse:Bash hook blocked [${policy}] (exit 0):\nread-only checkout`,
+		].join('\n\n');
+		const feedback = `PostToolUse:Edit hook feedback [${lint}] (exit 2):\nast-grep findings in A.kt:\nwarning[no-println]\nline 3`;
 		log.record(start('a', 'bash', { command: 'find . -name x' }));
-		log.record(blockedEnd('a', 'bash', "Blocked by PreToolUse hook:\nBlocked: use 'fd' instead of 'find'"));
+		log.record(blockedEnd('a', 'bash', block));
 		log.record(start('b', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
-		const feedback = 'PostToolUse hook feedback:\nast-grep findings in A.kt:\nwarning[no-println]\nline 3';
 		log.record(end('b', 'edit', text('Successfully edited A.kt', undefined, { context: [feedback] })));
 		log.record(ev({ type: 'submission_settled', outcome: 'completed' }));
 		expect(lines.slice(0, -1)).toEqual([
-			"[impl-1] #1 hook PreToolUse BLOCKED bash: Blocked: use 'fd' instead of 'find'",
-			"[impl-1] #1 bash(find . -name x) ✗ exit ? · 1.5s · 63B · Blocked by PreToolUse hook:",
-			'[impl-1] #2 hook PostToolUse feedback edit: ast-grep findings in A.kt: (+2 lines)',
+			'[impl-1] #1 hook PreToolUse guard.sh BLOCKED bash (exit 2):',
+			"[impl-1] #1    Blocked: use 'fd' instead of 'find'",
+			'[impl-1] #1 hook PreToolUse policy.sh BLOCKED bash (exit 0):',
+			'[impl-1] #1    read-only checkout',
+			'[impl-1] #1 bash(find . -name x) ✗ exit ? · 1.5s · 228B · blocked',
+			'[impl-1] #2 hook PostToolUse kotlin-lint.sh feedback edit (exit 2):',
+			'[impl-1] #2    ast-grep findings in A.kt:',
+			'[impl-1] #2    warning[no-println]',
+			'[impl-1] #2    line 3',
 			'[impl-1] #2 edit(A.kt, +1 -1) ✓ 1.5s',
 		]);
 		expect(lines.at(-1)).toMatch(/^\[impl-1\] done completed · 0 turns · 2 tools \(1 errors, 1 blocked\) · /);
-		expect(events().filter((e) => e.type === 'hook').map((e) => e.outcome)).toEqual(['blocked', 'feedback']);
+		const hookEvents = events().filter((e) => e.type === 'hook');
+		expect(hookEvents.map(({ event, outcome, command, exitCode, text }) => ({ event, outcome, command, exitCode, text }))).toEqual([
+			{ event: 'PreToolUse', outcome: 'blocked', command: guard, exitCode: 2, text: "Blocked: use 'fd' instead of 'find'" },
+			{ event: 'PreToolUse', outcome: 'blocked', command: policy, exitCode: 0, text: 'read-only checkout' },
+			{ event: 'PostToolUse', outcome: 'feedback', command: lint, exitCode: 2, text: 'ast-grep findings in A.kt:\nwarning[no-println]\nline 3' },
+		]);
+	});
+
+	it('shows at most 20 lines of a catch', () => {
+		const { log, lines } = setup();
+		const output = Array.from({ length: 25 }, (_, i) => `finding ${i + 1}`).join('\n');
+		log.record(start('a', 'edit', { path: 'A.kt', oldText: 'a', newText: 'b' }));
+		log.record(end('a', 'edit', text('Successfully edited A.kt', undefined, { context: [`PostToolUse:Edit hook feedback [lint.sh] (exit 2):\n${output}`] })));
+		expect(lines).toHaveLength(23);
+		expect(lines.slice(20, 22)).toEqual(['[impl-1] #1    finding 20', '[impl-1] #1    … +5 lines']);
 	});
 
 	it('shows blocks and context from any interceptor', () => {
@@ -85,9 +112,11 @@ describe('ToolLog', () => {
 		log.record(start('b', 'write', { path: 'a.txt', content: 'hi' }));
 		log.record(end('b', 'write', text('Successfully wrote', undefined, { context: ['write touched a.txt'] }), false, 20));
 		expect(lines).toEqual([
-			'[impl-1] #1 BLOCKED bash: no rm',
-			'[impl-1] #1 bash(rm x) ✗ exit ? · 1.5s · 5B · no rm',
-			'[impl-1] #2 context write: write touched a.txt',
+			'[impl-1] #1 BLOCKED bash:',
+			'[impl-1] #1    no rm',
+			'[impl-1] #1 bash(rm x) ✗ exit ? · 1.5s · 5B · blocked',
+			'[impl-1] #2 context write:',
+			'[impl-1] #2    write touched a.txt',
 			'[impl-1] #2 write(a.txt, 1 lines) ✓ 0.0s',
 		]);
 		const notes = events().filter((e) => e.type === 'blocked' || e.type === 'context');

@@ -88,31 +88,31 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 			const blocks: string[] = [];
 			const preContext: string[] = [];
 			let input = call.input;
-			for (const { outcome } of preRuns) {
-				if (outcome?.block) blocks.push(outcome.block);
-				if (outcome?.context) preContext.push(outcome.context);
+			for (const scriptRun of preRuns) {
+				const { outcome } = scriptRun;
+				if (outcome?.block) blocks.push(caught('blocked', call.tool, scriptRun, outcome.block));
+				if (outcome?.context) preContext.push(caught('context', call.tool, scriptRun, outcome.context));
 				if (outcome?.updatedInput) {
 					const updated = flueInput(call.tool, outcome.updatedInput);
 					input = { ...input, ...updated };
 				}
 			}
 			// A call that throws (blocked here, or failing in the tool) has no result to record script runs on.
-			if (blocks.length > 0) blocked(`Blocked by PreToolUse hook:\n${blocks.join('\n')}`);
+			if (blocks.length > 0) blocked(blocks.join('\n\n'));
 
 			const toolResult = await next(input);
-			const contextText = `PreToolUse hook context:\n${preContext.join('\n')}`;
-			const result = preContext.length === 0 ? toolResult : withContext(toolResult, contextText);
+			const result = preContext.reduce(withContext, toolResult);
 
 			// As in Claude Code: the input the tool ran with, and its own response.
 			const ranCall = { ...sandboxCall, input };
 			const toolResponse = { content: toolResult.content, details: toolResult.details };
 			const postRuns = await run('PostToolUse', ranCall, { tool_response: toolResponse });
 			const feedback: string[] = [];
-			for (const { outcome } of postRuns) {
-				if (outcome?.context) feedback.push(outcome.context);
+			for (const scriptRun of postRuns) {
+				const { outcome } = scriptRun;
+				if (outcome?.context) feedback.push(caught('feedback', call.tool, scriptRun, outcome.context));
 			}
-			const feedbackText = `PostToolUse hook feedback:\n${feedback.join('\n')}`;
-			const withFeedback = feedback.length === 0 ? result : withContext(result, feedbackText);
+			const withFeedback = feedback.reduce(withContext, result);
 
 			const scriptRuns = [...preRuns, ...postRuns];
 			const hookRunOf = ({ hookRun }: ScriptRun) => hookRun;
@@ -121,6 +121,15 @@ export function claudeHooks(options: ClaudeHooksOptions = {}): ToolInterceptor {
 			return withHookRuns(withFeedback, hookRuns);
 		},
 	};
+}
+
+/**
+ * One script's catch as the model and observers read it, named as Claude Code names it:
+ * `PreToolUse:Bash hook blocked [<command>] (exit 2):\n<what it printed>`. `ToolLog` parses this header.
+ */
+function caught(kind: 'blocked' | 'context' | 'feedback', tool: string, { hookRun }: ScriptRun, text: string): string {
+	const { event, command, exitCode } = hookRun;
+	return `${event}:${CLAUDE_TOOL[tool]} hook ${kind} [${command}] (exit ${exitCode}):\n${text}`;
 }
 
 /** Append `runs` to `result.details.fluex.hookRuns`, for observers; the text the model reads is unchanged. */

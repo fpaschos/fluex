@@ -42,7 +42,8 @@ describe('claudeHooks', () => {
 			{ 'guard.sh': `cmd="$(jq -r .tool_input.command)"; [[ "$cmd" == find* ]] && { echo "use fd" >&2; exit 2; }; exit 0` },
 		);
 		const { call } = await toolsWith(claudeHooks());
-		await expect(call('bash', { command: 'find .' })).rejects.toMatchObject({ code: 'FLUEX_TOOL_BLOCKED', message: 'Blocked by PreToolUse hook:\nuse fd' });
+		const message = 'PreToolUse:Bash hook blocked [${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh] (exit 2):\nuse fd';
+		await expect(call('bash', { command: 'find .' })).rejects.toMatchObject({ code: 'FLUEX_TOOL_BLOCKED', message });
 		expect(text(await call('bash', { command: 'echo fine' }))).toContain('fine');
 	});
 
@@ -284,13 +285,17 @@ describe('claudeHooks seen by toolLog', () => {
 		}
 	}
 
-	it('renders a block, hook feedback, and the script runs on the call they belong to', async () => {
+	it('renders each catch with its script, exit code and full output, on the call it belongs to', async () => {
 		claudeProject(
 			{
-				PreToolUse: [{ matcher: 'Bash', hooks: [command('guard.sh')] }],
+				PreToolUse: [{ matcher: 'Bash', hooks: [command('guard.sh'), command('ok.sh')] }],
 				PostToolUse: [{ matcher: 'Edit', hooks: [command('lint.sh')] }],
 			},
-			{ 'guard.sh': 'echo "use fd" >&2; exit 2', 'lint.sh': 'echo "TODO left" >&2; exit 2' },
+			{
+				'guard.sh': 'printf "use fd\\nnot find\\n" >&2; exit 2',
+				'ok.sh': 'exit 0',
+				'lint.sh': 'echo "TODO left" >&2; exit 2',
+			},
 		);
 		writeFileSync(join(dir, 'A.kt'), 'fun a() = 1\n');
 		const lines: string[] = [];
@@ -303,10 +308,13 @@ describe('claudeHooks seen by toolLog', () => {
 		await observed(subscriber, () => call('edit', edit), 'call-edit', 'edit', edit);
 
 		expect(lines).toEqual([
-			'[impl-1] #1 hook PreToolUse BLOCKED bash: use fd',
-			'[impl-1] #1 bash(find .) ✗ exit ? · 0.1s · 34B · Blocked by PreToolUse hook:',
+			'[impl-1] #1 hook PreToolUse guard.sh BLOCKED bash (exit 2):',
+			'[impl-1] #1    use fd',
+			'[impl-1] #1    not find',
+			expect.stringMatching(/^\[impl-1\] #1 bash\(find \.\) ✗ exit \? · 0\.1s · \d+B · blocked$/),
 			expect.stringMatching(/^\[impl-1\] #2 hook PostToolUse lint\.sh ✗ exit 2 · \d+\.\ds$/),
-			'[impl-1] #2 hook PostToolUse feedback edit: TODO left',
+			'[impl-1] #2 hook PostToolUse lint.sh feedback edit (exit 2):',
+			'[impl-1] #2    TODO left',
 			'[impl-1] #2 edit(A.kt, +1 -1) ✓ 0.1s',
 		]);
 	});
