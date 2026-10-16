@@ -85,13 +85,12 @@ export class ToolLog {
 				const failed = event.isError || (exitCode !== undefined && exitCode !== 0);
 				if (event.isError) run.errors++;
 				// What happened during the call goes before its line, in the order it happened.
-				const fluex = fluexOf(event.result);
+				const fluex = (event.result as { details?: { fluex?: FluexDetails } } | undefined)?.details?.fluex ?? {};
 				for (const hookRun of fluex.hookRuns ?? []) this.hookRun(id, call, event.toolCallId, ts, hookRun);
 				const isBlocked = event.errorInfo?.code === TOOL_BLOCKED;
 				if (isBlocked) run.blocked++;
-				const blockNotes = isBlocked ? [blockNote(event.errorInfo?.message ?? output)] : [];
-				const contextNotes = (fluex.context ?? []).map(contextNote);
-				for (const note of [...blockNotes, ...contextNotes]) this.note(id, call, event.toolCallId, ts, note);
+				if (isBlocked) this.note(id, call, event.toolCallId, ts, blockNote(event.errorInfo?.message ?? output));
+				for (const text of fluex.context ?? []) this.note(id, call, event.toolCallId, ts, contextNote(text));
 				// One line per call, when it ends: `flue run` already prints a line when it starts.
 				this.line(id, call.n, describe(call), ` ${outcome(call, event.isError, exitCode, event.durationMs, output)}`);
 				this.event(id, {
@@ -272,12 +271,6 @@ function add(total: Instance['usage'], usage: PromptUsage): void {
 /** Strings longer than the field limit are cut, so a large `write` does not bloat the log. */
 function clip(args: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(Object.entries(args).map(([key, v]) => [key, typeof v === 'string' && v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…` : v]));
-}
-
-/** What fluex interceptors recorded on a tool result. */
-function fluexOf(result: unknown): FluexDetails {
-	const details = (result as { details?: { fluex?: FluexDetails } } | undefined)?.details;
-	return details?.fluex ?? {};
 }
 
 /** The block message `claudeHooks` throws: `Blocked by PreToolUse hook:\n<scripts' reasons>`. */

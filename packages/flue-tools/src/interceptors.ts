@@ -61,7 +61,7 @@ export function blocked(reason: string): never {
 export interface FluexDetails {
 	/** Texts appended by {@link withContext}, in order. */
 	context?: string[];
-	/** Hook scripts run for the call by `claudeHooks`, whatever their outcome; absent when the call was blocked. */
+	/** Hook scripts `claudeHooks` ran for the call, whatever their outcome. */
 	hookRuns?: HookRun[];
 }
 
