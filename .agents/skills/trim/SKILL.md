@@ -18,6 +18,8 @@ Read each changed file whole, then look for:
 
 Do not change anything another contract depends on (wire formats, stdin/stdout shapes, public exports) unless the user agrees.
 
-List each cut with its line saving and what behaviour, if any, it drops. Apply the cuts that drop no required behaviour; ask about the rest.
+A cut that removes an assertion needs proof the rest still guard its behaviour: break that behaviour by hand once, run the test file, see it go red, revert.
 
-Run typechecking and the tests after the cuts, then commit to the current branch.
+List each cut with its line saving and what behaviour, if any, it drops. Apply the cuts that drop no behaviour at all. Ask about the rest: any cut that drops behaviour, required or not, and any cut that reverses a change made for review.
+
+Run typechecking and the tests after the cuts, then commit to the current branch, updating the PR description wherever a cut makes it stale.
