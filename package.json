@@ -1,5 +1,28 @@
 {
   "name": "fluex",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "oxlint --max-warnings=0",
+    "lint:fix": "oxlint --max-warnings=0 --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "prepare": "lefthook install",
+    "test": "vitest run",
+    "test:integration": "INTEGRATION=1 vitest run .integration.test.ts",
+    "pack": "pnpm -r --filter \"./packages/*\" exec pnpm pack --pack-destination ../../packs"
+  },
+  "devDependencies": {
+    "@flue/cli": "catalog:",
+    "@types/node": "26.6.5",
+    "lefthook": "2.2.1",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "oxlint-tsgolint": "7.0.2004",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
@@ -7,22 +30,8 @@
       "onFail": "download"
     }
   },
-  "packageManager": "pnpm@12.11.2",
-  "type": "module",
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24"
   },
-  "private": true,
-  "devDependencies": {
-    "@flue/cli": "catalog:",
-    "@types/node": "26.6.5",
-    "typescript": "7.0.2",
-    "vitest": "5.0.4"
-  },
-  "scripts": {
-    "typecheck": "pnpm -r run check:types",
-    "test": "vitest run",
-    "test:integration": "INTEGRATION=1 vitest run .integration.test.ts",
-    "pack": "pnpm -r --filter \"./packages/*\" exec pnpm pack --pack-destination ../../packs"
-  }
+  "packageManager": "pnpm@12.11.2"
 }

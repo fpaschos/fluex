@@ -1,12 +1,12 @@
-import type { Sandbox, SandboxFactory, SandboxToolFactory } from '@flue/runtime';
-import { defaultTools } from './interceptors.ts';
+import type { Sandbox, SandboxFactory, SandboxToolFactory } from '@flue/runtime'
+import { defaultTools } from './interceptors.ts'
 
 /** Keep `only` the listed names, or keep all but those in `exclude`. */
-export type NameFilter = { only: string[]; exclude?: never } | { exclude: string[]; only?: never };
+export type NameFilter = { only: string[]; exclude?: never } | { exclude: string[]; only?: never }
 
 function allows(filter: NameFilter, name: string): boolean {
-	if (filter.only) return filter.only.includes(name);
-	return !filter.exclude.includes(name);
+  if (filter.only) return filter.only.includes(name)
+  return !filter.exclude.includes(name)
 }
 
 /**
@@ -18,15 +18,15 @@ function allows(filter: NameFilter, name: string): boolean {
  * Not a security boundary: without `write` and `edit`, `bash` can still write files.
  */
 export function withSandboxTools(factory: SandboxFactory, filter: NameFilter): SandboxFactory {
-	const baseTools = factory.tools ?? defaultTools;
+  const baseTools = factory.tools ?? defaultTools
 
-	const tools: SandboxToolFactory = (sandbox, options) => {
-		const all = baseTools(sandbox, options);
-		const allowed = (tool: (typeof all)[number]) => allows(filter, tool.name);
-		return all.filter(allowed);
-	};
+  const tools: SandboxToolFactory = (sandbox, options) => {
+    const all = baseTools(sandbox, options)
+    const allowed = (tool: (typeof all)[number]) => allows(filter, tool.name)
+    return all.filter(allowed)
+  }
 
-	return { ...factory, tools };
+  return { ...factory, tools }
 }
 
 /**
@@ -40,20 +40,20 @@ export function withSandboxTools(factory: SandboxFactory, filter: NameFilter): S
  * Not a security boundary: `read`, `bash` and `glob` still reach a hidden `SKILL.md` by its path.
  */
 export function withSkills(factory: SandboxFactory, filter: NameFilter): SandboxFactory {
-	async function createSandbox(options: { id: string }): Promise<Sandbox> {
-		const sandbox = await factory.createSandbox(options);
+  async function createSandbox(options: { id: string }): Promise<Sandbox> {
+    const sandbox = await factory.createSandbox(options)
 
-		async function readdir(path: string): Promise<string[]> {
-			const entries = await sandbox.readdir(path);
-			const resolved = sandbox.resolvePath(path);
-			if (!resolved.endsWith('/.agents/skills')) return entries;
-			const allowed = (entry: string) => allows(filter, entry);
-			return entries.filter(allowed);
-		}
+    async function readdir(path: string): Promise<string[]> {
+      const entries = await sandbox.readdir(path)
+      const resolved = sandbox.resolvePath(path)
+      if (!resolved.endsWith('/.agents/skills')) return entries
+      const allowed = (entry: string) => allows(filter, entry)
+      return entries.filter(allowed)
+    }
 
-		// A spread, as Flue itself copies a sandbox (packaged-skill overlay): sandboxes are plain objects.
-		return { ...sandbox, readdir };
-	}
+    // A spread, as Flue itself copies a sandbox (packaged-skill overlay): sandboxes are plain objects.
+    return { ...sandbox, readdir }
+  }
 
-	return { ...factory, createSandbox };
+  return { ...factory, createSandbox }
 }
