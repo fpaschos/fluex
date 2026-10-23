@@ -1,11 +1,14 @@
-import { hc } from 'hono/client'
-import { createFlueClient, FlueApiError, FlueExecutionError } from '@flue/sdk'
-import type { AgentSendResult, FlueClient } from '@flue/sdk'
-import { newRunId } from '../run-id.ts'
-import type { SandboxRoutes } from '../sandbox-routes.ts'
+import {
+  createFlueClient,
+  FlueApiError,
+  FlueExecutionError,
+  newRunId,
+  removeSandbox as removeAppSandbox
+} from '@fluex/sdk'
+import type { AgentSendResult, FlueClient } from '@fluex/sdk'
 import { createLinePresenter } from './line-presenter.ts'
 
-// The core of `pnpm agent` (src/cli/agent.ts is its shell): one agent turn on the running app, over
+// The core of `pnpm agent` (src/agent.ts is its shell): one agent turn on the running app, over
 // HTTP only. Everything it shows comes from the API.
 
 /** What `pnpm agent <name> [-m <message>] [--data <json>] [--id <id>]` asks for. */
@@ -31,6 +34,11 @@ export interface AgentClientIO {
   color?: boolean
   /** Aborts the run (the first Ctrl-C); the client still waits for it to settle. */
   signal?: AbortSignal
+  /**
+   * A new conversation's initial data, before `--data` is merged over it: the project's defaults.
+   * Default `{ sandbox: runId }`, the run's own sandbox, removed after the run.
+   */
+  initialData?: (runId: string) => Record<string, unknown>
 }
 
 /** How a run the app admitted ended for the client; only `lost` may still be going on the app. */
@@ -59,8 +67,8 @@ export async function runAgent(command: AgentCommand, io: AgentClientIO): Promis
   const runId = newRunId()
   const id = command.id ?? `${runId}-${command.name}`
   // Initial data only creates a conversation; a continued one keeps the sandbox it was created with.
-  const initialData =
-    command.id === undefined ? { sandbox: runId, subscription: 'openai-codex', ...data } : undefined
+  const defaults = io.initialData ?? (key => ({ sandbox: key }))
+  const initialData = command.id === undefined ? { ...defaults(runId), ...data } : undefined
   const client = createFlueClient({ url: `${base}/agents/${command.name}/${id}`, fetch })
 
   let admission: AgentSendResult
@@ -133,14 +141,10 @@ async function removeSandbox(
   key: string,
   say: (text: string) => void
 ) {
-  const sandboxes = hc<SandboxRoutes>(`${base}/sandboxes`, { fetch })
-  const failed = (why: string) =>
-    say(`removing sandbox ${key} failed (${why}); pnpm sandbox rm ${key}`)
   try {
-    const response = await sandboxes[':key'].$delete({ param: { key } })
-    if (!response.ok) failed(`${response.status} ${await response.text()}`)
+    await removeAppSandbox({ baseUrl: base, key, fetch })
   } catch (error) {
-    failed(messageOf(error))
+    say(`removing sandbox ${key} failed (${messageOf(error)}); pnpm sandbox rm ${key}`)
   }
 }
 

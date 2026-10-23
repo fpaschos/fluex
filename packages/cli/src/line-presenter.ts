@@ -1,4 +1,4 @@
-import type { ConversationStreamChunk } from '@flue/sdk'
+import type { ConversationStreamChunk } from '@fluex/sdk'
 
 // One agent turn the way `flue run` shows it: the assistant's text and thinking, line by line, as
 // the client reads the conversation's updates. Tool calls are left to the server's tool log.

@@ -1,11 +1,12 @@
 import { cac } from 'cac'
 import { runAgent } from './agent-client.ts'
+import type { AgentClientIO } from './agent-client.ts'
 
-// `pnpm agent <name> [-m <message>] [--data <json>] [--id <id>]` (`pnpm smoke`, `pnpm planner`,
-// `pnpm implement`): one agent turn on the running app (`pnpm dev`, or FLUE_URL), over HTTP only.
-// This is the shell (argv, env, Ctrl-C, exit code); src/cli/agent-client.ts does the turn:
-// - a new conversation `<runId>-<name>` gets `sandbox` (the run id) and `subscription` (openai-codex)
-//   unless --data names them. A sandbox keyed by the run id is removed through the app afterwards;
+// `pnpm agent <name> [-m <message>] [--data <json>] [--id <id>]`: one agent turn on the running app
+// (`pnpm dev`, or FLUE_URL), over HTTP only. A project runs `agentCli` from its own entry, with its
+// defaults. This is the shell (argv, env, Ctrl-C, exit code); src/agent-client.ts does the turn:
+// - a new conversation `<runId>-<name>` gets the project's initial data (default `sandbox`: the run
+//   id) unless --data names them. A sandbox keyed by the run id is removed through the app afterwards;
 //   one you named, or a continued conversation's (--id), is kept (`pnpm sandbox rm <key>`).
 // - the assistant's text and thinking stream to stderr; the tool log stays on the app's terminal.
 // - stdout gets only the result, { id, text, data }. Exit 0 completed, 1 failed, 2 usage, 130 aborted.
@@ -25,12 +26,17 @@ interface Options {
   id?: Value
 }
 
+/** What a project sets for its `pnpm agent`. */
+export interface AgentCliOptions {
+  /** A new conversation's initial data for the run `runId`, before `--data`; see AgentClientIO. */
+  initialData?: AgentClientIO['initialData']
+}
+
 /**
- * Option `names`' value as typed: cac has no string options, so mri reads `-m 3.10` as 3.1 and
- * `--id 007` as 7. Falls back to the parsed `value`.
+ * Option `names`' value in `argv` as typed: cac has no string options, so mri reads `-m 3.10` as 3.1
+ * and `--id 007` as 7. Falls back to the parsed `value`.
  */
-function text(names: string[], value: Value): string | undefined {
-  const argv = process.argv.slice(2)
+function text(argv: string[], names: string[], value: Value): string | undefined {
   let typed: string | undefined
   for (const [i, arg] of argv.entries()) {
     if (arg === '--') break
@@ -43,9 +49,14 @@ function text(names: string[], value: Value): string | undefined {
 }
 
 /** One turn of `name`; the first Ctrl-C aborts it, a second exits at once. */
-async function agent(name: string, options: Options): Promise<number> {
+async function agent(
+  argv: string[],
+  name: string,
+  options: Options,
+  { initialData }: AgentCliOptions
+): Promise<number> {
   const interrupt = new AbortController()
-  process.on('SIGINT', () => {
+  const onInterrupt = () => {
     if (!interrupt.signal.aborted) {
       process.stderr.write('[fluex] aborting (Ctrl-C again to exit now, keeping the sandbox)\n')
       interrupt.abort()
@@ -55,43 +66,56 @@ async function agent(name: string, options: Options): Promise<number> {
       '[fluex] exited; the sandbox is kept: pnpm sandbox ls, pnpm sandbox rm <key>\n'
     )
     process.exit(130)
-  })
-  return runAgent(
-    {
-      name,
-      message: text(['-m', '--message'], options.message),
-      data: text(['--data'], options.data),
-      id: text(['--id'], options.id)
-    },
-    {
-      url: process.env.FLUE_URL ?? 'http://localhost:3000',
-      stdout: value => process.stdout.write(value),
-      stderr: value => process.stderr.write(value),
-      color: process.stderr.isTTY,
-      signal: interrupt.signal
-    }
-  )
+  }
+  process.on('SIGINT', onInterrupt)
+  try {
+    return await runAgent(
+      {
+        name,
+        message: text(argv, ['-m', '--message'], options.message),
+        data: text(argv, ['--data'], options.data),
+        id: text(argv, ['--id'], options.id)
+      },
+      {
+        url: process.env.FLUE_URL ?? 'http://localhost:3000',
+        stdout: value => process.stdout.write(value),
+        stderr: value => process.stderr.write(value),
+        color: process.stderr.isTTY,
+        signal: interrupt.signal,
+        initialData
+      }
+    )
+  } finally {
+    process.off('SIGINT', onInterrupt)
+  }
 }
 
-const cli = cac('pnpm agent')
-cli
-  .command('<name>', 'One agent turn on the running app')
-  .option('-m, --message <message>', 'The message', { default: 'go' })
-  .option('--data <json>', "Merged into a new conversation's initial data")
-  .option('--id <id>', 'Continue this conversation (no --data)')
-  .action(async (name: unknown, options: Options) => {
-    process.exitCode = await agent(String(name), options)
-  })
-cli.help()
+/** `pnpm agent` on `argv` (the arguments after the script); answers the exit code. */
+export async function agentCli(argv: string[], options: AgentCliOptions = {}): Promise<number> {
+  let code = 0
+  const cli = cac('pnpm agent')
+  cli
+    .command('<name>', 'One agent turn on the running app')
+    .option('-m, --message <message>', 'The message', { default: 'go' })
+    .option('--data <json>', "Merged into a new conversation's initial data")
+    .option('--id <id>', 'Continue this conversation (no --data)')
+    .action(async (name: unknown, parsed: Options) => {
+      code = await agent(argv, String(name), parsed, options)
+    })
+  cli.help()
 
-try {
-  cli.parse(process.argv, { run: false })
-  if (!cli.options.help && !cli.matchedCommand) {
-    cli.outputHelp()
-    process.exitCode = 2
-  } else await cli.runMatchedCommand()
-} catch (error) {
-  // cac's usage errors (a missing name, an unknown option) exit 2; runAgent answers its own.
-  console.error(`[fluex] ${error instanceof Error ? error.message : String(error)}`)
-  process.exitCode = error instanceof Error && error.name === 'CACError' ? 2 : 1
+  try {
+    // cac reads argv as process.argv: the node binary and the script first.
+    cli.parse(['node', 'pnpm agent', ...argv], { run: false })
+    if (!cli.options.help && !cli.matchedCommand) {
+      cli.outputHelp()
+      return 2
+    }
+    await cli.runMatchedCommand()
+    return code
+  } catch (error) {
+    // cac's usage errors (a missing name, an unknown option) exit 2; runAgent answers its own.
+    console.error(`[fluex] ${error instanceof Error ? error.message : String(error)}`)
+    return error instanceof Error && error.name === 'CACError' ? 2 : 1
+  }
 }
