@@ -1,11 +1,17 @@
 import { observe } from '@flue/runtime'
-import { toolLog } from '@fluex/flue-tools'
+import { toolLog } from './tool-log.ts'
+import type { ToolLogOptions } from './tool-log.ts'
 
-// The tool log, mounted once from src/app.ts: lines go to stderr, records to runs/<id>/events.jsonl.
-// `pnpm dev:watch` re-evaluates this module on a save while @flue/runtime (and its subscribers) stays
-// loaded, so the previous evaluation's subscriber is removed first: one line per event, not one per reload.
-
-const UNSUBSCRIBE = Symbol.for('superapp-flue.toolLog')
-const slot = globalThis as { [UNSUBSCRIBE]?: () => void }
-slot[UNSUBSCRIBE]?.()
-slot[UNSUBSCRIBE] = observe(toolLog({ runsDir: 'runs' }))
+/**
+ * Mounts the tool log once per process, under `key`: a re-evaluation of the caller (a `vite dev`
+ * reload, while @flue/runtime and its subscribers stay loaded) unsubscribes the previous mount
+ * first, so each event is logged once, not once per reload.
+ */
+export function mountToolLog(options: ToolLogOptions, key = 'fluex.toolLog'): () => void {
+  const slotKey = Symbol.for(key)
+  const slot = globalThis as { [k: symbol]: (() => void) | undefined }
+  slot[slotKey]?.()
+  const unsubscribe = observe(toolLog(options))
+  slot[slotKey] = unsubscribe
+  return unsubscribe
+}
