@@ -1,12 +1,13 @@
 # Server: a Flue Vite app with its own host, REST flows (research)
 
-Date: 2026-10-16 · Flue 2.3 (`@flue/vite` 2.3.0, vite 8.3.4) · Node 24 · Builds on
-[workspaces.md](workspaces.md), fluex research
-[flows.md](../../../fluex/docs/research/flows.md), [deployment.md](../../../fluex/docs/research/deployment.md).
+Date: 2026-10-16, updated 2026-10-23 (the MVP landed; its generic parts moved to `@fluex/sdk`, `@fluex/server`,
+`@fluex/cli`: fpaschos/hd-auto#7) · Flue 2.3 (`@flue/vite` 2.3.0, vite 8.3.4) · Node 24 · Builds on
+[workspaces.md](workspaces.md), [flows.md](flows.md), [deployment.md](deployment.md).
 
 Paths: flue `../../../flue/` (`vite/` = `packages/vite/src/`, `cli/` = `packages/cli/src/`, `rt/` =
-`packages/runtime/src/`, `docs/` = `apps/docs/src/content/docs/`), fluex `../../../fluex/`, sidecar `src/`.
-"Verified" means run in the spike [`fluex/spikes/custom-host`](../../../fluex/spikes/custom-host/README.md) on 2026-10-16
+`packages/runtime/src/`, `docs/` = `apps/docs/src/content/docs/`), fluex `../../`, the app `auto/superapp-flue/src/`
+(file references below with no prefix are the app's, as of 2026-10-16).
+"Verified" means run in the throwaway spike `spikes/custom-host` (fluex commit `3279649`, since removed) on 2026-10-16
 (offline faux provider). Everything else is read from source.
 
 ## 1. Question and decisions
@@ -22,7 +23,10 @@ ergonomics (`.md` imports, agent discovery), and room to extend the server (REST
 | **Flows are code in a map, not routes** | One generic `POST /flows/:name`; a new flow is a new file. |
 | **Own db for flow state** | Flow runs in our own sqlite file. Flue's db stays Flue's (conversations). |
 | **fluex = generic libraries, auto = the app** | fluex knows nothing about superapp (§8). |
-| **Incubate, then extract** | Host and flows kit start in `src/platform/` (no app imports), move to `@fluex/server` once `run-issue` runs. |
+| **Incubate, then extract** | Host and flows kit start in `src/platform/` (no app imports), move to `@fluex/server` once `run-issue` runs. Done for the hand-written routes (§8). |
+| **Clients are equals** | The CLI now, a React app later: both read only through the API, never the server's files or logs. |
+| **The db and the API are the source of truth** | `runs/` (the tool log's `events.jsonl`) and server logs are debug-only. |
+| **Client transport: `@flue/sdk`** | `send` + `read` for one turn; `observe({ live: 'sse' })` for UIs. `@fluex/sdk` re-exports it and adds only fluex's routes. |
 
 ## 2. How Flue loads and runs code
 
@@ -47,7 +51,7 @@ Flue feature per se" (`docs/guide/workflows.md:7`).
 | `flue()`: loading, `.md`, discovery, `.env` in dev | `vite.config.ts`, `flue.config.ts` |
 | Runtime assembly, db connect, recovery (`node-server.ts:61-127`) | `src/app.ts`: Hono app, default export with `fetch` (`node-server.ts:119-121`) |
 | `createAgentRouter(Agent)`: `POST /:id`, `/:id/abort`, `GET /:id` (`rt/runtime/registration.ts:267`, `:281`, `:314`) | Which routers, where; flow routes; auth/CORS middleware |
-| `@flue/sdk` (HTTP client library) | Host, own db, flows, CLI |
+| `@flue/sdk` (HTTP client library; used through `@fluex/sdk`), `@flue/react` for UIs | Host, own db, flows, CLI |
 
 **Dev** (`vite dev`):
 - **Every save swaps the app.** It loads a new copy, then stops the old one with `previous.stop(30_000)` (`vite/node-dev.ts:100-119`).
@@ -174,9 +178,21 @@ No built-in auth on either target: it's Hono middleware in `app.ts`.
 
 | fluex (generic) | auto/superapp-flue (the app, owns the server) |
 |---|---|
-| `flue-docker`, `flue-tools`, `pi-auth` (compiled JS) | agents + `.md` prompts, `sandboxes.ts` (`TARGET_REPO`, mounts, image) |
-| later `@fluex/server`: `createHost()`, `defineFlow`, `createFlowRouter` | flows (`run-issue`), `app.ts`, host entry, own db, env |
-| later `@fluex/cli`: HTTP client | |
+| `flue-docker` (+ `defineSandbox`, `sandboxCli`), `flue-tools` (+ `mountToolLog`, `agentData`, `required`), `pi-auth` | agents + `.md` prompts, `sandboxes.ts` (`TARGET_REPO`, mounts, image) |
+| `@fluex/sdk`: the client layer over `@flue/sdk`, browser-safe (`newRunId`, `removeSandbox`, `RunStatus`) | flow declarations (`run-issue`), a thin `app.ts`, db, env |
+| `@fluex/server`: `flowRoutes`, `sandboxRoutes`, `ask`; `@fluex/server/testing` (`useApp`, `useFauxCodex`) | thin `pnpm agent` / `pnpm sandbox` entries with the app's defaults |
+| `@fluex/cli`: `agentCli` (`pnpm agent` over HTTP) | |
+| still later in `@fluex/server`: `createHost()`, `defineFlow` | |
+
+Dependencies (no cycles; no client loads the server):
+
+```
+@fluex/cli ────► @fluex/sdk ────► @flue/sdk
+@fluex/server ─► @fluex/sdk        (newRunId, wire types)
+(later) React app ► @fluex/sdk + @flue/react
+```
+
+The plan below is the 2026-10-16 plan; §10 is the cut that landed.
 
 ```
 1. Vite app skeleton (auto)
@@ -221,13 +237,18 @@ No built-in auth on either target: it's Hono middleware in `app.ts`.
 
 ## 9. Open
 
-- **Flow progress for clients:** a status endpoint vs an SSE stream of step events (the only piece Flue doesn't provide).
+- ~~**Flow progress for clients:** a status endpoint vs an SSE stream of step events.~~ Decided: a db-backed
+  `GET /flows/runs/<id>` lists the run's steps, each with its `conversationUrl` and structured `result`; clients read
+  each step's conversation through the SDK; a flow SSE stream comes later.
 - **WebSockets under `vite dev`:** option 3 in §5, unverified.
 - **No `app.ts`:** whether Flue mounts default agent routes without one. Unverified, and moot for us.
 - **`idempotencyKey` stability:** undocumented in the API reference (§6).
 - **No app-level startup or shutdown hook in Flue:** provider and socket cleanup are ours. It belongs in the host's `stop()`.
 
 ## 10. MVP path
+
+**Done** (fpaschos/hd-auto#2 and its children #3–#6): steps 1–3 below landed in `auto/superapp-flue`, then the generic
+code moved to fluex (fpaschos/hd-auto#7, fpaschos/fluex#15; §8).
 
 Goal: the Flue Vite app is the only loader (`.md` imports, discovery), and the console and the server run the same
 code: the console is an HTTP client of the app. A cut of §8, not a new plan.

@@ -92,6 +92,9 @@ inside a Flue server, call `init()`/`dispatch()` directly" (`reference/agent-api
 | **One project-wide list** in `runtime.ts`; `withFlue(main)` starts with it | **chosen**: mirrors a server, which registers every `'use agent'` module; `init()` is an address, registering unused agents costs nothing |
 | Discovery of `'use agent'` files | Vite's job; not available under `tsx` |
 
+Since 2026-10: the script entry is history; flows run in the app, through `@fluex/server`'s flow routes
+([server.md](server.md)). What follows is kept as the record.
+
 Script entry (built): the flow file runs itself with `if (isMain(import.meta.url)) … withFlue(runIssue)`
 (`target-app-flue/src/runtime.ts`). `import.meta.main` is `undefined` under `tsx` 4.23 (checked), so
 `isMain` compares `import.meta.url` with `pathToFileURL(process.argv[1])`: true only for the file `tsx`

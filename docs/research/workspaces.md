@@ -1,12 +1,17 @@
 # Workspaces: a git worktree per issue, local first (design)
 
-Date: 2026-10-15 · git 2.56.0 (host), 2.39.5 (sandbox image) · Flue 2.3 · Builds on fluex
-[IMPLEMENTATION_PLAN.md](../../../fluex/IMPLEMENTATION_PLAN.md) §6 `git`, §9 M5–M6, §18, and fluex research
-[composition.md](../../../fluex/docs/research/composition.md), [flows.md](../../../fluex/docs/research/flows.md),
-[deployment.md](../../../fluex/docs/research/deployment.md),
-[sandbox-security.md](../../../fluex/docs/research/sandbox-security.md). This is the next milestone (fluex M5).
+Date: 2026-10-15, re-read against the code 2026-10-23 (fpaschos/hd-auto#7) · git 2.56.0 (host), 2.39.5 (sandbox
+image) · Flue 2.3 · Builds on fluex [IMPLEMENTATION_PLAN.md](../../IMPLEMENTATION_PLAN.md) §6 `git`, §9 M5–M6, §18,
+and research [composition.md](composition.md), [flows.md](flows.md), [deployment.md](deployment.md),
+[sandbox-security.md](sandbox-security.md), [server.md](server.md). This is the next milestone (fluex M5).
 
-Paths: fluex `../../../fluex/`, automaton `../../../automaton/packages/core/src/`, sidecar `src/`.
+Paths: fluex `../../`, automaton `../../../automaton/packages/core/src/`, the app (sidecar) `auto/superapp-flue/src/`.
+
+**Where things stand (2026-10-23):** agents and `run-issue` run in the Flue Vite app ([server.md](server.md)). A
+sandbox is keyed by the run id: a flow run's agents share `sandbox: <runId>`, and `@fluex/server`'s flow routes
+remove it when the run ends; `pnpm agent` keys its own and removes it through `DELETE /sandboxes/<key>`. Every
+sandbox mounts the live `TARGET_REPO` checkout, so the flow routes take one run at a time (409 otherwise).
+Workspaces, below, are not built yet.
 "Verified" means run in this session against a scratch repo and the `superapp-flue-sandbox` image.
 
 ## 1. Question and decisions
@@ -19,7 +24,7 @@ repo, keep it between runs, and bring the work back, so the same flow code later
 | **A workspace is a resource, not an agent concern** | Opened and closed by the flow; agents only get its key. Several agents and conversations use one workspace. |
 | **Local backend first** | Host git worktree, mounted into the Docker sandbox. Remote backend (clone in the container, push + MR) later, same interface. |
 | **Host git only inside the workspace resource** | Flows and agents never call git on the host. The workspace package does (create, check, merge, remove); agents commit inside the sandbox. Refines the earlier rule "only agents run git". |
-| **The composition root picks the backend** | Explicit config at the entry point (script `main`, server startup). Never auto-detected. Script vs server is not the axis (§4.4). |
+| **The composition root picks the backend** | Explicit config where the app composes its sandboxes (superapp: `src/sandboxes.ts`, loaded at app startup). Never auto-detected. Local vs remote checkout is the axis (§4.4). |
 
 ## 2. What a worktree is, and what the container must mount
 
@@ -138,7 +143,7 @@ a server on the Mac (deployment.md step 3) uses `localWorktrees`; a CI job or a 
   restart or a continuation from another process (`pnpm agent --id …`, a server route).
 - A sandbox factory is lazy; `createSandbox()` runs once per initialized agent, and adapters "key durable
   resources on the instance id" (Flue `reference/agent-hooks-api.md:111`, `guide/sandboxes.md:109, :170`).
-- So `AgentData.sandbox` (today the run id, `src/agents/agent-data.ts:10`) becomes the workspace key, and
+- So `AgentData.sandbox` (today the run id, `src/agents/agent-data.ts`) becomes the workspace key, and
   agents resolve it through a registry the composition root fills:
   `superapp(key)` → `workspaces.sandboxFor(key)`. One container per workspace, as the fluex plan intends
   (§6 `flue-docker`: ``key: () => `ticket-${n}` `` so implement → review → refine share one container).
@@ -146,6 +151,10 @@ a server on the Mac (deployment.md step 3) uses `localWorktrees`; a CI job or a 
   worktree list (`git worktree list --porcelain`, locked with reason `fluex:<key>`), no in-memory state.
 
 ## 5. The flow
+
+Today a flow's step is `run.ask(agent, step, data)` (`@fluex/server`'s `FlowRun`): conversation `<runId>-<step>`,
+idempotency key `<runId>:<step>`. The sketch below names conversations by workspace key instead, so `FlowRun` needs
+a way to ask under another id (open, §8).
 
 ```ts
 // src/flows/run-issue.ts (sketch)
@@ -167,12 +176,12 @@ return { pick, impl, review, commits: await ws.commits(), closed };             
 - Reuse later: `workspaces.get('issue-65')`, then `pnpm agent implementer --id issue-65-impl -m "…"`; the
   conversation's recorded key finds the same worktree and container.
 - `currentBranch` comes from the workspace package (`workspaces.currentBranch()`), not from `git()` in the flow.
-- The `try { … } finally { removeSandbox(runId) }` in `run-issue.ts:19-35` stays only for the planner's
-  run-scoped container; workspace containers live and die with the workspace.
+- The flow routes' removal of the run's sandbox at the end of a run (`flowRoutes`, keyed by the run id) stays only
+  for the planner's run-scoped container; workspace containers live and die with the workspace.
 
 ## 6. Security: what changes
 
-| Today (`src/sandboxes.ts:30`) | With workspaces |
+| Today (`src/sandboxes.ts`, `workspace: TARGET_REPO`) | With workspaces |
 |---|---|
 | The live checkout is mounted rw at `/workspace`: uncommitted work, gitignored secrets, `.git` (sandbox-security findings 2, 3, 5) | The worktree is mounted. Uncommitted work in the live checkout is out of reach; gitignored files are absent unless seeded (finding 3 narrows) |
 | `.git` writable inside the checkout | The main `.git` is still mounted **rw** (commits need `objects/`, `refs/`, `logs/`, `worktrees/<name>/`). `.git/config` and `.git/hooks` stay writable unless overlaid (finding 2) |
@@ -215,20 +224,23 @@ Tasks:
 3. `run-issue.ts` per §5; implementer report drops `commits` (back to `ws.commits()`).
 4. `pnpm workspace ls|rm <key>` beside `pnpm sandbox`.
 
-Gate: issue #65 through `pnpm run-issue` on a throwaway base branch: the live checkout untouched during
+Gate: issue #65 through `POST /flows/run-issue` on a throwaway base branch: the live checkout untouched during
 the run (`git status` unchanged), commits on `agent/issue-65`, `close('merge')` fast-forwards base, no
 worktree, branch, lock or container left after `discard`; a second run with `keep` then `get` resumes in the
 same worktree and container; `git worktree prune` run inside the container removes nothing.
 
 Open:
 
-- **Planner checkout.** It still mounts the live checkout rw (`src/sandboxes.ts:30`; flue-docker mounts the
+- **Planner checkout.** It still mounts the live checkout rw (`src/sandboxes.ts`; flue-docker mounts the
   workspace rw, `spec.ts:50, :175`). Options: a detached `base` worktree (`worktree add --detach`), or a
   read-only workspace option in flue-docker.
 - **Base when the live checkout is dirty:** refuse at `close('merge')` (automaton) or merge into a base not
   checked out (`update-ref`) and let the user fast-forward.
 - **Seed list** for superapp's gitignored files, and Gradle cost of a cold build per worktree.
-- **Concurrent workspaces** share `~/.gradle-fluex` (sandbox-security finding 8).
+- **Concurrent workspaces** share `~/.gradle-fluex` (sandbox-security finding 8); the flow routes' one-run-at-a-time
+  rule can lift only once runs no longer share a checkout.
+- **Conversation ids per workspace:** `FlowRun.ask` names a step's conversation `<runId>-<step>`; the §5 sketch
+  needs `<key>-impl`.
 - **Key format** (`issue-65` vs run-scoped) and what `discard` does with a conversation that still names it.
 - Remote backend token and MR creation (§4.3).
 
@@ -243,8 +255,8 @@ Open:
   `packages/flue-docker/src/spec.ts`.
 - Flue docs (`../flue/apps/docs/src/content/docs/`): `reference/agent-api.md`, `reference/agent-hooks-api.md`,
   `guide/sandboxes.md`, `guide/durability.md`.
-- Sidecar: `src/sandbox.ts`, `src/sandboxes.ts`, `src/flows/run-issue.ts`, `src/agents/agent-data.ts`,
-  `src/cli/agent.ts`.
+- The app (`auto/superapp-flue/`): `src/sandboxes.ts`, `src/flows/run-issue.ts`, `src/agents/agent-data.ts`;
+  since moved to fluex: `src/sandbox.ts` (`flue-docker`'s `defineSandbox`), `src/cli/agent.ts` (`@fluex/cli`).
 - Others: [Claude Code worktrees](https://code.claude.com/docs/en/worktrees),
   [Conductor](https://www.conductor.build/docs/concepts/workspaces-and-branches),
   [container-use](https://github.com/dagger/container-use), [Codex cloud](https://learn.chatgpt.com/docs/cloud),
