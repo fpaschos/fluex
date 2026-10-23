@@ -1,24 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import type { Admission } from './support/app.ts'
-import { useApp } from './support/app.ts'
-import { submits, useFauxCodex } from './support/model.ts'
+import type { Admission } from '../src/testing/index.ts'
+import { submits, useApp, useFauxCodex } from '../src/testing/index.ts'
 
 const app = useApp()
 const codex = useFauxCodex()
 
-const REPORT = {
-  astGrep: true,
-  fd: true,
-  rg: true,
-  build: { ok: true, exitCode: 0 },
-  skills: []
-}
+const REPORT = { ok: true }
 
-/** One smoke turn on conversation `id` through the app, until it settles. */
-async function smokeTurn(id: string) {
+/** One echo turn on conversation `id` through the app, until it settles. */
+async function echoTurn(id: string) {
   codex.setResponses([submits(REPORT)])
-  const response = await app.post(`/agents/smoke/${id}`, { kind: 'user', body: 'go' })
+  const response = await app.post(`/agents/echo/${id}`, { kind: 'user', body: 'go' })
   await app.updatesUntilSettled((await response.json()) as Admission)
 }
 
@@ -34,16 +27,16 @@ async function loggedTypes(id: string): Promise<string[]> {
 
 describe('the tool log', () => {
   it("records a turn's model call, tool call and settlement once", async () => {
-    await smokeTurn('log-1')
+    await echoTurn('log-1')
 
     expect(await loggedTypes('log-1')).toEqual(['turn', 'tool_start', 'tool', 'settled'])
   })
 
-  it('records them once after the app reloads its modules (`pnpm dev:watch`)', async () => {
+  it('records them once after the app reloads its modules (`vite dev` watching)', async () => {
     vi.resetModules()
-    await import('../src/observability.ts')
+    await import('./fixture/src/app.ts')
 
-    await smokeTurn('log-2')
+    await echoTurn('log-2')
 
     expect(await loggedTypes('log-2')).toEqual(['turn', 'tool_start', 'tool', 'settled'])
   })

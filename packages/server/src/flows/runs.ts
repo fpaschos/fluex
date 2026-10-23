@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { removeSandbox as removeDockerSandbox } from '@fluex/flue-docker'
+import { newRunId } from '@fluex/sdk'
+import type { RunStatus } from '@fluex/sdk'
 import { ask } from '../ask.ts'
-import { newRunId } from '../run-id.ts'
-import { describeError } from '../utils.ts'
-import type { Flow, FlowRun, RunStatus } from './run-types.ts'
+import { describeError } from '../errors.ts'
+import type { Flow, FlowRun } from './run-types.ts'
 
-// The flow routes (src/app.ts mounts them at /flows), written by hand: no flows kit yet
-// (docs/server.md §10). A run lives in memory and is lost on restart.
+// The flow routes (an app mounts them at /flows), written by hand: no flows kit yet
+// (docs/research/server.md §10). A run lives in memory and is lost on restart.
 //
 //   POST /flows/<flow>         → 202 { runId }; the flow runs in the background
 //   GET  /flows/runs/<runId>   → { status, step?, steps, result?, error? }, 404 when unknown
@@ -30,8 +31,8 @@ export function flowRoutes(
   { removeSandbox = removeDockerSandbox }: { removeSandbox?: (key: string) => Promise<void> } = {}
 ): Hono {
   const runs = new Map<string, RunStatus>()
-  // One run at a time: every run shares TARGET_REPO's working tree, the Gradle home and the backlog
-  // (docs/server.md §10).
+  // One run at a time: every run shares the target repo's working tree, its build caches and its
+  // backlog (docs/research/server.md §10).
   let inFlight: string | undefined
   const routes = new Hono()
 

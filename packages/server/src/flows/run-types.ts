@@ -1,6 +1,6 @@
 import type { Agent, AgentReply } from '@flue/runtime'
 
-// The types of the flow routes (src/flows/runs.ts): what a flow sees, and a run's status on the wire.
+// What a flow sees (src/flows/runs.ts). A run's status on the wire, RunStatus, is @fluex/sdk's.
 
 /** One run of a flow, as the flow sees it. */
 export interface FlowRun {
@@ -15,14 +15,3 @@ export interface FlowRun {
 
 /** A flow: plain code driving agents for one run, resolving to the run's result. */
 export type Flow = (run: FlowRun) => Promise<unknown>
-
-/** A run's status, as `GET /flows/runs/<runId>` answers it. */
-export interface RunStatus {
-  status: 'running' | 'done' | 'failed'
-  /** The step running now; only while the run is `running`. */
-  step?: string
-  /** The conversation ids of the steps started so far, readable at /agents/<name>/<id>. */
-  steps: string[]
-  result?: unknown
-  error?: string
-}

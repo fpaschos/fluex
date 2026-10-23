@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sandboxRoutes } from '../src/sandbox-routes.ts'
+import { sandboxRoutes } from '../src/sandboxes.ts'
 
 /** The sandbox routes, with a remover that only records its keys (or fails with `error`). */
 function useRoutes({ error }: { error?: Error } = {}) {

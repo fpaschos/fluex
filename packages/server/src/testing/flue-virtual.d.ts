@@ -2,7 +2,7 @@
 // (these mirror its own, `src/bootstrap/virtual-modules.d.ts`). `.md` imports are typed by
 // @flue/runtime itself (`types/markdown-md.d.ts`).
 
-/** The agents src/app.ts mounts. */
+/** The agents an app's src/app.ts mounts. */
 declare module 'virtual:flue/agents' {
   import type { Agent } from '@flue/runtime'
   export interface ScannedAgent {
@@ -15,7 +15,7 @@ declare module 'virtual:flue/agents' {
   export const scannedAgents: readonly ScannedAgent[]
 }
 
-/** The app loader the tests use (test/support/app.ts). */
+/** The app loader `useApp` uses (src/testing/app.ts). */
 declare module 'virtual:flue/server' {
   import type { LoadedFlueNodeApplication, LoadFlueNodeApplicationOptions } from '@flue/vite'
   /** Assembles the runtime around app.ts, with no listener (what `vite dev` serves). */

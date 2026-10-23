@@ -1,7 +1,7 @@
 import { init } from '@flue/runtime'
 import type { Agent, AgentReply } from '@flue/runtime'
 
-// One agent turn, for flows. The server prints only the tool log (src/observability.ts); the
+// One agent turn, for flows. The server prints only the tool log (`mountToolLog`); the
 // assistant's text is for clients, which read it from the API. The server owns signals: Ctrl-C
 // stops it, not one turn.
 

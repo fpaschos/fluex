@@ -1,10 +1,9 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
-import { Smoke } from '../src/agents/smoke/smoke.ts'
 import type { Flow } from '../src/flows/run-types.ts'
 import { flowRoutes } from '../src/flows/runs.ts'
-import { useApp } from './support/app.ts'
-import { submits, useFauxCodex } from './support/model.ts'
+import { submits, useApp, useFauxCodex } from '../src/testing/index.ts'
+import { Echo } from './fixture/src/agents/echo.ts'
 
 /** A promise settled from outside: the fake flow ends when the test says so. */
 function deferred<T>() {
@@ -127,13 +126,7 @@ describe('a flow run', () => {
 describe("a flow run's steps", () => {
   useApp() // the Flue runtime the steps' agents run in
   const codex = useFauxCodex()
-  const REPORT = {
-    astGrep: true,
-    fd: true,
-    rg: true,
-    build: { ok: true, exitCode: 0, durationSeconds: 1 },
-    skills: []
-  }
+  const REPORT = { ok: true }
 
   it('names the step running now and lists its conversation id', async () => {
     const answer = deferred<void>()
@@ -144,22 +137,22 @@ describe("a flow run's steps", () => {
       }
     ])
     const routes = useRoutes({
-      'run-issue': async run => (await run.ask(Smoke, 'smoke', {})).data
+      'run-issue': async run => (await run.ask(Echo, 'echo', {})).data
     })
     const { runId } = (await (await routes.start('run-issue')).json()) as { runId: string }
 
     expect(await waitFor(routes.status, runId, body => body.steps.length > 0)).toEqual({
       status: 'running',
-      step: 'smoke',
-      steps: [`${runId}-smoke`]
+      step: 'echo',
+      steps: [`${runId}-echo`]
     })
 
     answer.resolve()
 
     expect(await settled(routes.status, runId)).toEqual({
       status: 'done',
-      steps: [`${runId}-smoke`],
-      result: { smoke: [REPORT] }
+      steps: [`${runId}-echo`],
+      result: { echo: [REPORT] }
     })
   })
 
@@ -167,8 +160,8 @@ describe("a flow run's steps", () => {
     codex.setResponses([submits(REPORT)])
     const routes = useRoutes({
       'run-issue': async run => {
-        const first = await run.ask(Smoke, 'smoke', {})
-        const again = await run.ask(Smoke, 'smoke', {})
+        const first = await run.ask(Echo, 'echo', {})
+        const again = await run.ask(Echo, 'echo', {})
         return { first: first.submissionId, again: again.submissionId, data: again.data }
       }
     })
@@ -176,9 +169,9 @@ describe("a flow run's steps", () => {
 
     const run = (await settled(routes.status, runId)) as { result?: Record<string, unknown> }
 
-    expect(run).toMatchObject({ status: 'done', steps: [`${runId}-smoke`] })
+    expect(run).toMatchObject({ status: 'done', steps: [`${runId}-echo`] })
     expect(run.result?.again).toBe(run.result?.first)
-    expect(run.result?.data).toEqual({ smoke: [REPORT] })
+    expect(run.result?.data).toEqual({ echo: [REPORT] })
     expect(codex.getPendingResponseCount()).toBe(0)
   })
 })
