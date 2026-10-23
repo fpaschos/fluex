@@ -14,3 +14,5 @@ export {
   type DockerResult,
   dockerCli
 } from './docker-cli.ts'
+export { defineSandbox, type SandboxConfig } from './define-sandbox.ts'
+export { sandboxCli } from './cli.ts'

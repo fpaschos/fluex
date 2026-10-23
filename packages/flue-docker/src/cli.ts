@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util'
-import { listSandboxes, pruneSandboxes, removeSandbox } from '@fluex/flue-docker'
-import type { SandboxInfo } from '@fluex/flue-docker'
+import { listSandboxes, pruneSandboxes, removeSandbox } from './cleanup.ts'
+import type { SandboxInfo } from './cleanup.ts'
 
 // `pnpm sandbox ls|rm <key>|prune [--state <state>]`: the fluex sandbox containers, selected by
 // their fluex labels (never by name). A key is the Flue instance id printed after each run.
@@ -28,22 +28,27 @@ function table(sandboxes: SandboxInfo[]): string {
     .join('\n')
 }
 
-const { positionals, values } = parseArgs({
-  allowPositionals: true,
-  options: { state: { type: 'string' } }
-})
-const [command, key] = positionals
+/** Runs `ls | rm <key> | prune [--state <state>]` from `argv`; answers the exit code (2: usage). */
+export async function sandboxCli(argv: string[]): Promise<number> {
+  const { positionals, values } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: { state: { type: 'string' } }
+  })
+  const [command, key] = positionals
 
-if (command === 'ls' && key === undefined) {
-  const sandboxes = await listSandboxes()
-  console.log(sandboxes.length > 0 ? table(sandboxes) : 'no sandboxes')
-} else if (command === 'rm' && key !== undefined && positionals.length === 2) {
-  await removeSandbox(key)
-  console.log(`no sandbox left for ${key}`)
-} else if (command === 'prune' && key === undefined) {
-  const removed = await pruneSandboxes(values.state === undefined ? {} : { state: values.state })
-  console.log(removed.length > 0 ? `removed:\n${table(removed)}` : 'nothing to remove')
-} else {
-  console.error(USAGE)
-  process.exitCode = 2
+  if (command === 'ls' && key === undefined) {
+    const sandboxes = await listSandboxes()
+    console.log(sandboxes.length > 0 ? table(sandboxes) : 'no sandboxes')
+  } else if (command === 'rm' && key !== undefined && positionals.length === 2) {
+    await removeSandbox(key)
+    console.log(`no sandbox left for ${key}`)
+  } else if (command === 'prune' && key === undefined) {
+    const removed = await pruneSandboxes(values.state === undefined ? {} : { state: values.state })
+    console.log(removed.length > 0 ? `removed:\n${table(removed)}` : 'nothing to remove')
+  } else {
+    console.error(USAGE)
+    return 2
+  }
+  return 0
 }
