@@ -30,7 +30,7 @@ export interface TestApp {
  * The app as `vite dev` assembles it (the project's src/app.ts, the scanned agents, db.ts), loaded in
  * this process with no listener. Requests go straight to its `fetch`; stopped after the suite. Needs
  * the `flue()` plugin in the vitest config (its dev-server hook stripped) and `virtual:flue/server`
- * declared, as src/testing/flue-virtual.d.ts does.
+ * declared, as src/flue-virtual.d.ts does.
  */
 export function useApp(): TestApp {
   let app: LoadedFlueNodeApplication | undefined
