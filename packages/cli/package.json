@@ -1,0 +1,17 @@
+{
+  "name": "@fluex/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fluex/sdk": "workspace:*",
+    "cac": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
+  }
+}

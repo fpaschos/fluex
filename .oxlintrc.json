@@ -109,5 +109,23 @@
       }
     ],
     "import/consistent-type-specifier-style": ["error", "prefer-top-level"]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["packages/sdk/**"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["node:*"],
+                "message": "@fluex/sdk runs in browsers: no Node built-ins."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

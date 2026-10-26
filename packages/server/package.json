@@ -1,0 +1,28 @@
+{
+  "name": "@fluex/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fluex/flue-docker": "workspace:*",
+    "@fluex/sdk": "workspace:*",
+    "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "catalog:",
+    "@flue/runtime": "catalog:",
+    "@flue/vite": "catalog:",
+    "@fluex/flue-tools": "workspace:*",
+    "valibot": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@flue/runtime": "catalog:",
+    "@flue/vite": "catalog:"
+  }
+}

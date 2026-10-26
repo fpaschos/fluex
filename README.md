@@ -1,7 +1,14 @@
 # fluex
 
 Extensions for [Flue](https://github.com/withastro/flue) that run coding agents unattended on real projects: a target app's issues are implemented, tested and committed by an agent.
-Packages: `pi-auth` (models through a pi subscription), `flue-docker` (a Docker sandbox), `flue-tools` (tool interceptors with Claude-compatible hooks, tool and skill filters, tool logs).
+Packages: `pi-auth` (models through a pi subscription), `flue-docker` (a Docker sandbox, `defineSandbox`, the `pnpm sandbox` CLI), `flue-tools` (tool interceptors with Claude-compatible hooks, tool and skill filters, tool logs), and for apps served by the Flue Vite app: `sdk` (the browser-safe client layer over `@flue/sdk`), `server` (flow and sandbox routes, test helpers), `cli` (`pnpm agent` over HTTP).
+
+```
+@fluex/cli ────► @fluex/sdk ────► @flue/sdk
+@fluex/server ─► @fluex/sdk
+```
+
+Research notes: [docs/research/](docs/research/) ([server.md](docs/research/server.md) for the app and its routes).
 Goal: a daily agent loop built on upstream Flue plus these packages, sandboxed in Docker over git worktrees; a decision layer comes later.
 Plan and progress: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
