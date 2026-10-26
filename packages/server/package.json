@@ -3,10 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
-  },
+  "exports": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
@@ -25,9 +22,7 @@
     "vitest": "5.0.4"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "catalog:",
     "@flue/runtime": "catalog:",
-    "@flue/vite": "catalog:",
-    "vitest": "5.0.4"
+    "@flue/vite": "catalog:"
   }
 }

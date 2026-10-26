@@ -180,7 +180,7 @@ No built-in auth on either target: it's Hono middleware in `app.ts`.
 |---|---|
 | `flue-docker` (+ `defineSandbox`, `sandboxCli`), `flue-tools` (+ `mountToolLog`, `agentData`, `required`), `pi-auth` | agents + `.md` prompts, `sandboxes.ts` (`TARGET_REPO`, mounts, image) |
 | `@fluex/sdk`: the client layer over `@flue/sdk`, browser-safe (`newRunId`, `removeSandbox`, `RunStatus`) | flow declarations (`run-issue`), a thin `app.ts`, db, env |
-| `@fluex/server`: `flowRoutes`, `sandboxRoutes`, `ask`; `@fluex/server/testing` (`useApp`, `useFauxCodex`) | thin `pnpm agent` / `pnpm sandbox` entries with the app's defaults |
+| `@fluex/server`: `flowRoutes`, `sandboxRoutes`, `ask` | thin `pnpm agent` / `pnpm sandbox` entries with the app's defaults |
 | `@fluex/cli`: `agentCli` (`pnpm agent` over HTTP) | |
 | still later in `@fluex/server`: `createHost()`, `defineFlow` | |
 

@@ -12,7 +12,7 @@ Change `package.json` and `pnpm-lock.yaml` only through the pnpm CLI, so the man
 
 ## Packages
 
-`pi-auth`, `flue-docker`, `flue-tools` (Flue extensions); `sdk`, `server`, `cli` (for apps served by the Flue Vite app). No cycles, and no client loads the server: `cli` → `sdk` → `@flue/sdk`; `server` → `sdk`. `sdk` runs in browsers too: no `node:*` imports (lint enforces it). `server`'s tests run against `packages/server/test/fixture`, a minimal Flue app; `cli`'s tests reuse it.
+`pi-auth`, `flue-docker`, `flue-tools` (Flue extensions); `sdk`, `server`, `cli` (for apps served by the Flue Vite app). No cycles, and no client loads the server: `cli` → `sdk` → `@flue/sdk`; `server` → `sdk`. `sdk` runs in browsers too: no `node:*` imports (lint enforces it). `server`'s tests run against `packages/server/test/fixture`, a minimal Flue app (helpers in `test/support`, not exported).
 
 ## Commands
 

@@ -15,7 +15,7 @@ declare module 'virtual:flue/agents' {
   export const scannedAgents: readonly ScannedAgent[]
 }
 
-/** The app loader `useApp` uses (src/testing/app.ts). */
+/** The app loader `useApp` uses (test/support/app.ts). */
 declare module 'virtual:flue/server' {
   import type { LoadedFlueNodeApplication, LoadFlueNodeApplicationOptions } from '@flue/vite'
   /** Assembles the runtime around app.ts, with no listener (what `vite dev` serves). */

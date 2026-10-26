@@ -2,8 +2,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
 import type { Flow } from '../src/flows/run-types.ts'
 import { flowRoutes } from '../src/flows/runs.ts'
-import { submits, useApp, useFauxCodex } from '../src/testing/index.ts'
 import { Echo } from './fixture/src/agents/echo.ts'
+import { submits, useApp, useFauxCodex } from './support/index.ts'
 
 /** A promise settled from outside: the fake flow ends when the test says so. */
 function deferred<T>() {

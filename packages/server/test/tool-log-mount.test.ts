@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import type { Admission } from '../src/testing/index.ts'
-import { submits, useApp, useFauxCodex } from '../src/testing/index.ts'
+import type { Admission } from './support/index.ts'
+import { submits, useApp, useFauxCodex } from './support/index.ts'
 
 const app = useApp()
 const codex = useFauxCodex()
