@@ -12,6 +12,6 @@
     "cac": "catalog:"
   },
   "devDependencies": {
-    "vitest": "5.0.4"
+    "vitest": "catalog:"
   }
 }
