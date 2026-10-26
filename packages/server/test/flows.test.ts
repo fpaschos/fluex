@@ -84,6 +84,21 @@ describe('a flow run', () => {
     })
   })
 
+  it('reports a flow that throws before returning its promise as failed', async () => {
+    const throwsAtOnce: Flow = () => {
+      throw new Error('no issue to pick')
+    }
+    const routes = useRoutes({ 'run-issue': throwsAtOnce })
+    const { runId } = (await (await routes.start('run-issue')).json()) as { runId: string }
+
+    expect(await settled(routes.status, runId)).toEqual({
+      status: 'failed',
+      steps: [],
+      error: 'no issue to pick'
+    })
+    expect(routes.removed).toEqual([runId])
+  })
+
   it.each([
     ['succeeds', (end: ReturnType<typeof deferred>) => end.resolve({ picked: null })],
     ['fails', (end: ReturnType<typeof deferred>) => end.reject(new Error('boom'))]

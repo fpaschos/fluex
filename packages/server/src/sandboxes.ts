@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { ErrorHandler } from 'hono'
 import { removeSandbox as removeDockerSandbox } from '@fluex/flue-docker'
 import { describeError } from './errors.ts'
 
@@ -12,14 +13,15 @@ import { describeError } from './errors.ts'
 export function sandboxRoutes({
   removeSandbox = removeDockerSandbox
 }: { removeSandbox?: (key: string) => Promise<void> } = {}) {
-  return new Hono().delete('/:key', async c => {
-    try {
+  /** Any error a route throws, as 500 { error }; kept per route when an app mounts these. */
+  const failed: ErrorHandler = (error, c) => c.json({ error: describeError(error) }, 500)
+
+  return new Hono()
+    .delete('/:key', async c => {
       await removeSandbox(c.req.param('key'))
-    } catch (error) {
-      return c.json({ error: describeError(error) }, 500)
-    }
-    return c.body(null, 204)
-  })
+      return c.body(null, 204)
+    })
+    .onError(failed)
 }
 
 export type SandboxRoutes = ReturnType<typeof sandboxRoutes>
